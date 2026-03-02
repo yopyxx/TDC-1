@@ -21,10 +21,6 @@ const GUILD_ID = '1018194815286001756';
 // ✅ 스프레드시트 ID (사용자 제공)
 const SPREADSHEET_ID = '1EhC_xDBXR7mm7_KdVPp2dKPjNSKClcEEHIZT6ZPvfaQ';
 
-// ✅ 시트(탭) 이름: 스크린샷 기준으로 기본값 설정 (다르면 여기만 수정)
-const MAJOR_SHEET_NAME = process.env.MAJOR_SHEET_NAME || '표40_2'; // 소령 탭
-const LTCOL_SHEET_NAME = process.env.LTCOL_SHEET_NAME || '표41_2'; // 중령 탭
-
 // ================== Railway용: 서비스계정 JSON을 env로 받아 파일로 생성 ==================
 function ensureGoogleKeyFile() {
   const envJson = process.env.GOOGLE_SA_JSON;
@@ -55,98 +51,52 @@ const gAuth = new google.auth.GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/spreadsheets']
 });
 
-// ✅ sheets client (공용)
-function getSheetsClient() {
-  return google.sheets({ version: 'v4', auth: gAuth });
+async function appendRowToSheet(rangeA1, values) {
+  if (!SPREADSHEET_ID) throw new Error('SPREADSHEET_ID가 설정되지 않았습니다.');
+  const sheets = google.sheets({ version: 'v4', auth: gAuth });
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: rangeA1,                     // 예: '소령!A:Z'
+    valueInputOption: 'USER_ENTERED',   // ✅ =IMAGE 같은 수식 사용 가능
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [values] }
+  });
 }
 
-/**
- * ✅ 업서트(같은 날/같은 유저는 한 줄로 합산해서 갱신)
- * - A~I: 사진처럼 보이는 컬럼
- * - J: reportDate(숨김용)
- * - K: userId(숨김용)
- *
- * 시트 구조 권장:
- * 1행: 헤더
- * 2행부터 데이터
- */
-async function upsertDailyRow(sheetName, reportDate, userId, visibleAtoIValues) {
-  if (!SPREADSHEET_ID) throw new Error('SPREADSHEET_ID가 설정되지 않았습니다.');
-
-  const sheets = getSheetsClient();
-
-  // J:K에서 (reportDate, userId) 매칭되는 행 찾기
-  // - 1행은 헤더로 가정하고 2행부터 검색
-  const keyRange = `${sheetName}!J:K`;
-  const keyRes = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: keyRange
-  });
-
-  const rows = keyRes.data.values || [];
-  // rows[0] == row1(J1,K1) 헤더일 수 있음
-  // 실제 시트에 헤더가 없다면 그래도 문제는 없지만, 보통 헤더가 있으니 2행부터 찾는 방식으로 처리
-  let foundRowNumber = null;
-
-  for (let i = 1; i < rows.length; i++) {
-    const [d, uid] = rows[i] || [];
-    if (d === reportDate && uid === userId) {
-      foundRowNumber = i + 1; // 배열 index(0-based) => 시트 row number(1-based)
-      break;
-    }
-  }
-
-  const fullRowAtoK = [...visibleAtoIValues, reportDate, userId];
-
-  if (foundRowNumber) {
-    // 기존 행 업데이트 (A~K)
-    const updateRange = `${sheetName}!A${foundRowNumber}:K${foundRowNumber}`;
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: updateRange,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [fullRowAtoK] }
-    });
-  } else {
-    // 새 행 추가 (A~K)
-    const appendRange = `${sheetName}!A:K`;
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: appendRange,
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [fullRowAtoK] }
-    });
-  }
+// ✅ 시트 셀에 이미지로 표시 (원하면 HYPERLINK로 바꿀 수 있음)
+function toImageFormula(url) {
+  return `=IMAGE("${url}")`;
+  // return `=HYPERLINK("${url}","사진")`;
 }
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMembers, // ✅ 역할 보유 전체 인원 포함/제외 + 가입일(joinedAt) 체크에 필요
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
   ]
 });
 
-// ✅ 감독관 역할 ID 여러 개 지원
+// ✅ 감독관 역할 ID 여러 개 지원 (기존)
 const SUPERVISOR_ROLE_IDS = [
   '1018195904261529691', // 감독관
-  '1473688580613341419'  // 인사행정부단장
+  '1473688580613341419'  // 인사행정부단장(기존 감독관 리스트에 포함되어 있었음)
 ];
 
 // ✅ 소령/중령 역할 ID
 const MAJOR_ROLE_ID = '1472582859339596091';   // 소령 역할
 const LTCOL_ROLE_ID = '1018447060627894322';   // 중령 역할
 
-// ✅ 8개 점수 명령어의 "표시 대상 제외 역할"
+// ✅ 8개 점수 명령어의 "표시 대상 제외 역할"(하나라도 보유 시 제외)
 const EXCLUDED_ROLE_IDS = [
   '1018195904261529691', // 감독관
   '1463433369869090962', // 사령본부
   '1473688580613341419'  // 인사행정부단장
 ];
 
-// ✅ /강등대상 제외 역할
+// ✅ /강등대상 제외 역할(하나라도 보유하면 제외)
 const DEMOTION_EXCLUDED_ROLE_IDS = [
   '1477394729808298167', // 법무교육단
   '1018195904261529691', // 감독관
@@ -154,7 +104,7 @@ const DEMOTION_EXCLUDED_ROLE_IDS = [
   '1473688580613341419'  // 인사행정부단장
 ];
 
-// ✅ /강등대상 사용 가능 역할
+// ✅ /강등대상 사용 가능 역할(감독관 or 인사행정부단장)
 const DEMOTION_ALLOWED_ROLE_IDS = [
   '1018195904261529691', // 감독관
   '1473688580613341419'  // 인사행정부단장
@@ -173,6 +123,15 @@ let data = {
 const dayTotalsCache = new Map(); // key: `${rankName}|${dateStr}` -> Map(userId->total)
 
 // ================== 페이지네이션 세션(메시지별) ==================
+/**
+ * sessions.get(messageId) = {
+ *   mode: 'today'|'yesterday'|'week'|'lastweek'|'demotion',
+ *   rankName?: '소령'|'중령',
+ *   key?: 'YYYY-MM-DD', // daily dateStr 또는 weekly weekStart
+ *   list: [...],        // 표시용 정렬된 전체 리스트
+ *   pageSize: 28
+ * }
+ */
 const paginationSessions = new Map();
 
 // ================== 데이터 저장 ==================
@@ -243,7 +202,7 @@ function hasAnyRole(member, roleIds) {
 
 function daysSinceJoined(member) {
   const joined = member?.joinedAt;
-  if (!joined) return 9999;
+  if (!joined) return 9999; // joinedAt 없으면 안전하게 오래된 것으로 취급
   const diffMs = Date.now() - joined.getTime();
   return Math.floor(diffMs / (1000 * 60 * 60 * 24));
 }
@@ -257,6 +216,7 @@ function getRankNameForMember(member) {
   return null;
 }
 
+// ✅ 해당 그룹에 저장된 "모든 날짜키" 수집 (prune 정책에 따라 최근만 남을 수 있음)
 function getAllDateKeysForRank(rankName) {
   const group = rankName === '소령' ? data.소령 : data.중령;
   const set = new Set();
@@ -266,7 +226,7 @@ function getAllDateKeysForRank(rankName) {
   return Array.from(set).sort();
 }
 
-// ================== 누적 정합성 ==================
+// ================== 누적 정합성(중요) ==================
 function recomputeTotals(group) {
   for (const u of Object.values(group.users || {})) {
     let a = 0;
@@ -334,11 +294,13 @@ function getExtra중령(input) {
   );
 }
 
-// ================== 퍼센타일/배점 ==================
+// ================== 퍼센타일(상위 X%) 정의 개선 ==================
 function getTopPercentFromRank(rank, n) {
   if (n <= 1) return 1;
-  return Math.round(((rank - 1) / (n - 1)) * 99) + 1;
+  return Math.round(((rank - 1) / (n - 1)) * 99) + 1; // 1..100
 }
+
+// ================== 퍼센테이지 기반 배점 ==================
 function getAdminPointsByPercentile(pct) {
   if (pct <= 10) return 70;
   if (pct <= 34) return 50;
@@ -347,17 +309,19 @@ function getAdminPointsByPercentile(pct) {
   return 20;
 }
 
-// ================== 8개 점수 명령어: 역할 보유 전체 인원 목록 ==================
+// ================== (핵심) 8개 점수 명령어: 역할 보유 전체 인원 목록 ==================
 async function getEligibleMemberIdsByRank(guild, rankName) {
-  const members = await guild.members.fetch();
+  const members = await guild.members.fetch(); // joinedAt/roles 확인 위해 전체 fetch
   const requiredRole = rankName === '소령' ? MAJOR_ROLE_ID : LTCOL_ROLE_ID;
 
   const ids = [];
   for (const [, m] of members) {
     if (m.user?.bot) continue;
 
+    // 포함: 해당 역할 보유
     if (!m.roles.cache.has(requiredRole)) continue;
 
+    // 제외: EXCLUDED_ROLE_IDS 중 하나라도 보유 시 제외
     const excluded = m.roles.cache.some(r => EXCLUDED_ROLE_IDS.includes(r.id));
     if (excluded) continue;
 
@@ -366,7 +330,7 @@ async function getEligibleMemberIdsByRank(guild, rankName) {
   return ids;
 }
 
-// ================== 일일 점수 계산 ==================
+// ================== 일일 점수 계산(멤버ID 기반: 보고 안한 인원 포함) ==================
 function buildDayScoresForMembers(rankName, dateStr, memberIds) {
   const is소령 = rankName === '소령';
   const minRequired = is소령 ? 3 : 4;
@@ -378,7 +342,7 @@ function buildDayScoresForMembers(rankName, dateStr, memberIds) {
     const extraRaw = u?.daily?.[dateStr]?.extra ?? 0;
     const meetsMin = adminUnits >= minRequired;
 
-    const nick = u?.nick || `<@${userId}>`;
+    const nick = u?.nick || `<@${userId}>`; // 기록 없으면 멘션으로 표시
 
     return {
       userId,
@@ -393,6 +357,7 @@ function buildDayScoresForMembers(rankName, dateStr, memberIds) {
     };
   });
 
+  // 퍼센트 산정 대상: 최소업무 충족자만
   const eligible = rows.filter(r => r.meetsMin);
   eligible.sort((a, b) => b.adminUnits - a.adminUnits);
 
@@ -401,6 +366,7 @@ function buildDayScoresForMembers(rankName, dateStr, memberIds) {
   for (let i = 0; i < n; i++) {
     const cur = eligible[i];
 
+    // 동점 처리: 같은 adminUnits면 같은 퍼센트(가장 앞 rank 기준)
     let start = i;
     while (start > 0 && eligible[start - 1].adminUnits === cur.adminUnits) start--;
 
@@ -413,6 +379,7 @@ function buildDayScoresForMembers(rankName, dateStr, memberIds) {
     cur.total = Math.min(100, cur.adminPoints + cur.extraPoints);
   }
 
+  // 최소업무 미달자: 0점 + 퍼센트 제외
   for (const r of rows) {
     if (!r.meetsMin) {
       r.adminPoints = 0;
@@ -436,6 +403,7 @@ function getDayTotalsOnly(rankName, dateStr) {
   const minRequired = is소령 ? 3 : 4;
   const group = is소령 ? data.소령 : data.중령;
 
+  // 캐시는 "보고 기록이 있는 유저" 기준으로 계산 (없는 유저는 get(uid)||0)
   const rows = Object.entries(group.users || {}).map(([userId, u]) => {
     const adminUnits = u?.daily?.[dateStr]?.admin ?? 0;
     const extraRaw = u?.daily?.[dateStr]?.extra ?? 0;
@@ -605,6 +573,7 @@ function pruneOldWeekly(keepWeeks) {
   }
 }
 
+// (자동 스냅샷은 기존 운영 목적 유지)
 function makeDailySnapshot(rankName, dateStr) {
   const group = rankName === '소령' ? data.소령 : data.중령;
   const ids = Object.keys(group.users || {});
@@ -681,12 +650,13 @@ async function registerCommands() {
   const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
   if (!guild) return console.log('서버를 찾을 수 없습니다.');
 
+  // ✅ 닉네임 입력칸 제거 (보고자는 자동 저장/표시)
   const 소령Command = new SlashCommandBuilder()
     .setName('소령행정보고').setDescription('소령 행정 보고서 (소령 전용)')
     .addIntegerOption(o => o.setName('권한지급').setDescription('권한 지급 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('랭크변경').setDescription('랭크 변경 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('팀변경').setDescription('팀 변경 : n건').setRequired(true))
-    .addIntegerOption(o => o.setName('보직모집').setDescription('스카웃/모집시험 : n건 (추가 2점/건)').setRequired(true))
+    .addIntegerOption(o => o.setName('보직모집').setDescription('보직 가입 요청·모집 시험 : n건 (추가 2점/건)').setRequired(true))
     .addIntegerOption(o => o.setName('인게임시험').setDescription('인게임 시험 : n건 (추가 1점/건)').setRequired(true));
 
   for (let i = 1; i <= 10; i++) {
@@ -726,6 +696,7 @@ async function registerCommands() {
   await guild.commands.set([
     소령Command, 중령Command,
 
+    // 8개 점수 명령어
     new SlashCommandBuilder().setName('소령오늘점수').setDescription('소령 오늘 점수 (감독관 전용)'),
     new SlashCommandBuilder().setName('중령오늘점수').setDescription('중령 오늘 점수 (감독관 전용)'),
     new SlashCommandBuilder().setName('소령주간점수').setDescription('소령 주간 점수 (감독관 전용)'),
@@ -735,14 +706,17 @@ async function registerCommands() {
     new SlashCommandBuilder().setName('소령지난주점수').setDescription('소령 지난주 점수 (감독관 전용)'),
     new SlashCommandBuilder().setName('중령지난주점수').setDescription('중령 지난주 점수 (감독관 전용)'),
 
+    // (공용 명령은 유지)
     new SlashCommandBuilder().setName('어제점수').setDescription('소령/중령 어제 점수 한 번에 보기 (감독관 전용)'),
     new SlashCommandBuilder().setName('지난주점수').setDescription('소령/중령 지난주 점수 한 번에 보기 (감독관 전용)'),
 
+    // 운영/초기화/통계
     소령오늘초기화,
     중령오늘초기화,
     new SlashCommandBuilder().setName('초기화주간').setDescription('주간 전체 초기화 (감독관)'),
     new SlashCommandBuilder().setName('행정통계').setDescription('전체 통계 (감독관)'),
 
+    // ✅ 신규: 강등 대상
     new SlashCommandBuilder().setName('강등대상').setDescription('총합 점수 150점 미만 강등 대상 조회 (감독관/인사행정부단장)')
   ]);
 
@@ -761,6 +735,7 @@ client.once('ready', async () => {
   if (!data.중령.weekStart) data.중령.weekStart = thisWeekStart;
   saveData();
 
+  // ✅ 키파일 존재 확인(로그)
   if (!fs.existsSync(GOOGLE_KEYFILE)) {
     console.log(`⚠️ GOOGLE KEYFILE을 찾을 수 없습니다: ${GOOGLE_KEYFILE}`);
     console.log('   Railway Variables에 GOOGLE_SA_JSON을 추가했는지 확인하세요.');
@@ -776,11 +751,13 @@ client.once('ready', async () => {
 
 // ================== interactionCreate ==================
 client.on('interactionCreate', async interaction => {
-  // ================== 버튼: 페이지네이션(pg|...) / 강등(dg|...) ==================
+  // ================== 버튼: 8개 점수 명령어 페이지네이션(pg|...) ==================
   if (interaction.isButton()) {
     const customId = interaction.customId || '';
 
+    // ---- (A) 점수 페이지네이션: pg|rankName|mode|key|page ----
     if (customId.startsWith('pg|')) {
+      // 권한 체크: 감독관만 페이지 넘김 허용(기존 정책 유지)
       const isSupervisor = () => interaction.member?.roles?.cache?.some(r => SUPERVISOR_ROLE_IDS.includes(r.id));
       if (!isSupervisor()) {
         return interaction.reply({ content: '❌ 감독관만 사용할 수 있습니다.', ephemeral: true });
@@ -795,6 +772,7 @@ client.on('interactionCreate', async interaction => {
       const msgId = interaction.message?.id;
       const session = msgId ? paginationSessions.get(msgId) : null;
 
+      // 세션 없으면 재계산
       if (!session || session.rankName !== rankName || session.mode !== mode || session.key !== key) {
         const guild = interaction.guild;
         if (!guild) return interaction.reply({ content: '❌ 서버 정보를 찾을 수 없습니다.', ephemeral: true });
@@ -867,6 +845,7 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
+    // ---- (B) 강등대상 페이지네이션: dg|page ----
     if (customId.startsWith('dg|')) {
       const allowed = hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
       if (!allowed) {
@@ -916,17 +895,16 @@ client.on('interactionCreate', async interaction => {
   // ================== 보고서 ==================
   if (cmd === '소령행정보고' || cmd === '중령행정보고') {
     const is소령 = cmd === '소령행정보고';
-    const reportDate = getReportDate(); // ✅ “다음날 새벽2시까지” 기준 반영된 날짜
-    const userId = interaction.user.id;
+    const date = getReportDate();
 
-    // ✅ 닉네임: 실제 닉(displayName)
+    // ✅ 닉네임: 실제 닉(displayName)으로 저장/시트 기록
     const displayName = interaction.member?.displayName || interaction.user.username;
 
     let adminCount = 0, extra = 0;
     let replyText =
       `✅ **${is소령 ? '소령' : '중령'} 보고 완료!**\n` +
       `**닉네임**: ${displayName}\n` +
-      `**기준일(reportDate)**: ${reportDate}\n\n`;
+      `**일자**: ${date}\n\n`;
 
     let input = null;
 
@@ -945,7 +923,7 @@ client.on('interactionCreate', async interaction => {
       replyText += `**권한지급**(행정): ${input.권한지급}건\n`;
       replyText += `**랭크변경**(행정): ${input.랭크변경}건\n`;
       replyText += `**팀변경**(행정): ${input.팀변경}건\n`;
-      replyText += `**스카웃/모집시험**(추가 2점/건): ${input.보직모집}건\n`;
+      replyText += `**보직 가입 요청·모집 시험**(추가 2점/건): ${input.보직모집}건\n`;
       replyText += `**인게임 시험**(추가 1점/건): ${input.인게임시험}건\n`;
     } else {
       input = {
@@ -962,15 +940,15 @@ client.on('interactionCreate', async interaction => {
       extra = getExtra중령(input);
 
       replyText += `**역할지급**(행정): ${input.역할지급}건\n`;
-      replyText += `**인증 처리**(행정): ${input.인증}건\n`;
+      replyText += `**인증**(행정): ${input.인증}건\n`;
       replyText += `**서버 역할 요청**(행정): ${input.서버역할}건\n`;
-      replyText += `**감찰**(행정): ${input.감찰}건\n`;
+      replyText += `**행정 감찰**(행정): ${input.감찰}건\n`;
       replyText += `**인게임 시험**(추가): ${input.인게임시험}건\n`;
-      replyText += `**코호스트**(추가): ${input.코호스트}건\n`;
-      replyText += `**피드백**(추가): ${input.피드백}건\n`;
+      replyText += `**인게임 코호스트**(추가): ${input.코호스트}건\n`;
+      replyText += `**피드백 제공**(추가): ${input.피드백}건\n`;
     }
 
-    // 첨부 사진 수집(디스코드 응답용)
+    // 첨부 사진 수집
     const photoAttachments = [];
     for (let i = 1; i <= 10; i++) {
       const att = interaction.options.getAttachment(`증거사진${i}`);
@@ -978,60 +956,64 @@ client.on('interactionCreate', async interaction => {
     }
     if (photoAttachments.length > 0) replyText += `\n📸 증거 사진 ${photoAttachments.length}장 첨부됨`;
 
-    // ================== 로컬(JSON) 데이터 저장(기존 그대로) ==================
+    // ================== 로컬(JSON) 데이터 저장 ==================
     const group = is소령 ? data.소령 : data.중령;
-    if (!group.users[userId]) {
-      group.users[userId] = { nick: displayName, totalAdmin: 0, totalExtra: 0, daily: {} };
+    if (!group.users[interaction.user.id]) {
+      group.users[interaction.user.id] = { nick: displayName, totalAdmin: 0, totalExtra: 0, daily: {} };
     }
-    const u = group.users[userId];
+    const u = group.users[interaction.user.id];
 
-    u.nick = displayName;
-    if (!u.daily[reportDate]) u.daily[reportDate] = { admin: 0, extra: 0 };
+    u.nick = displayName; // ✅ 로컬에도 displayName 저장
+    if (!u.daily[date]) u.daily[date] = { admin: 0, extra: 0 };
 
-    u.daily[reportDate].admin += adminCount;
-    u.daily[reportDate].extra += extra;
+    u.daily[date].admin += adminCount;
+    u.daily[date].extra += extra;
 
     u.totalAdmin += adminCount;
     u.totalExtra += extra;
 
-    dayTotalsCache.delete(`${is소령 ? '소령' : '중령'}|${reportDate}`);
+    // 캐시 무효화
+    dayTotalsCache.delete(`${is소령 ? '소령' : '중령'}|${date}`);
+
     saveData();
 
-    // ================== ✅ 구글 시트 저장: “사진처럼” A~I + (숨김키) J,K ==================
-    // ✅ 총점수(원자료) = 행정건수(adminCount) + 추가점수(extra)  (요청대로 기존 기준 유지)
+    // ================== ✅ 구글 시트 저장 (원자료 총점 = 행정건수 + 추가점수) ==================
     const totalScoreRaw = adminCount + extra;
 
     try {
+      const photoUrls = photoAttachments.slice(0, 10).map(a => a.url);
+      const photoCells = photoUrls.map(u => toImageFormula(u));
+
       if (is소령) {
-        // A~I: 단위/명, 닉네임, 권한지급, 랭크변경, 팀변경, 총행정건수, 스카웃/모집, 인게임시험, 총점수
-        const visible = [
-          '1명',
+        await appendRowToSheet('소령!A:Z', [
+          date,
           displayName,
+          interaction.user.id,
           input.권한지급,
           input.랭크변경,
           input.팀변경,
-          adminCount,
+          adminCount,         // 총행정건수
           input.보직모집,
           input.인게임시험,
-          totalScoreRaw
-        ];
-        await upsertDailyRow(MAJOR_SHEET_NAME, reportDate, userId, visible);
+          totalScoreRaw,      // ✅ 원자료 총점
+          ...photoCells
+        ]);
       } else {
-        // A~I: 단위/명, 닉네임, 역할지급, 인증처리, 감찰, 총행정건수, 피드백, 인게임시험&코호스트, 총점수
-        const ingameAndCohostCount = (input.인게임시험 || 0) + (input.코호스트 || 0);
-
-        const visible = [
-          '1명',
+        await appendRowToSheet('중령!A:Z', [
+          date,
           displayName,
+          interaction.user.id,
           input.역할지급,
           input.인증,
+          input.서버역할,
           input.감찰,
-          adminCount,
+          adminCount,        // 총행정건수(가중치 적용된 calculate중령 결과)
+          input.인게임시험,
+          input.코호스트,
           input.피드백,
-          ingameAndCohostCount,
-          totalScoreRaw
-        ];
-        await upsertDailyRow(LTCOL_SHEET_NAME, reportDate, userId, visible);
+          totalScoreRaw,     // ✅ 원자료 총점
+          ...photoCells
+        ]);
       }
     } catch (e) {
       console.error('❌ 구글시트 저장 실패:', e);
@@ -1069,10 +1051,12 @@ client.on('interactionCreate', async interaction => {
     return;
   }
 
-  // ================== 감독관 전용 ==================
+  // ================== 감독관 전용(기존 운영/조회) ==================
   const supervisorOnlyCmds = new Set([
+    // 8개 점수 명령어는 "감독관 전용"으로 유지
     '소령오늘점수', '소령주간점수', '소령어제점수', '소령지난주점수',
     '중령오늘점수', '중령주간점수', '중령어제점수', '중령지난주점수',
+    // 공용/운영
     '어제점수', '지난주점수',
     '초기화주간', '소령오늘초기화', '중령오늘초기화',
     '행정통계'
@@ -1082,7 +1066,7 @@ client.on('interactionCreate', async interaction => {
     return interaction.reply({ content: '❌ 감독관만 사용할 수 있습니다.', ephemeral: true });
   }
 
-  // ================== 8개 점수 명령어 ==================
+  // ================== ✅ 8개 대상 명령어: 전체 역할 보유자 포함 + 페이지네이션 ==================
   const guild = interaction.guild;
 
   async function replyDailyPaged(rankName, dateStr, mode) {
@@ -1143,9 +1127,11 @@ client.on('interactionCreate', async interaction => {
     paginationSessions.set(msg.id, { rankName, mode, key: weekStart, list, pageSize });
   }
 
+  // 오늘 점수
   if (cmd === '소령오늘점수') return replyDailyPaged('소령', getReportDate(), 'today');
   if (cmd === '중령오늘점수') return replyDailyPaged('중령', getReportDate(), 'today');
 
+  // 주간 점수(이번 주)
   if (cmd === '소령주간점수') {
     const weekStart = data.소령.weekStart || getSundayWeekStart(getReportDate());
     return replyWeeklyPaged('소령', weekStart, 'week');
@@ -1155,9 +1141,11 @@ client.on('interactionCreate', async interaction => {
     return replyWeeklyPaged('중령', weekStart, 'week');
   }
 
+  // 어제 점수
   if (cmd === '소령어제점수') return replyDailyPaged('소령', getYesterdayDate(), 'yesterday');
   if (cmd === '중령어제점수') return replyDailyPaged('중령', getYesterdayDate(), 'yesterday');
 
+  // 지난주 점수
   if (cmd === '소령지난주점수') {
     const thisWeekStart = data.소령.weekStart || getSundayWeekStart(getReportDate());
     const lastWeekStart = data.소령.lastWeekStart || addDays(thisWeekStart, -7);
@@ -1169,7 +1157,7 @@ client.on('interactionCreate', async interaction => {
     return replyWeeklyPaged('중령', lastWeekStart, 'lastweek');
   }
 
-  // ================== /강등대상 ==================
+  // ================== ✅ /강등대상 ==================
   if (cmd === '강등대상') {
     const allowed = hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
     if (!allowed) {
@@ -1251,19 +1239,19 @@ client.on('interactionCreate', async interaction => {
     return;
   }
 
-  // ================== 공용/운영(요약 유지) ==================
+  // ================== (기존 공용/운영 명령들: 최소 유지) ==================
   if (cmd === '어제점수') {
     const dateStr = getYesterdayDate();
     const embed = new EmbedBuilder()
       .setTitle(`어제 점수 (기준일: ${dateStr})`)
-      .setDescription('※ 공용 명령은 현재 “요약 안내”만 유지 중입니다.');
+      .setDescription('※ 공용 명령은 현재 “요약 안내”만 유지 중입니다. (요청 시 동일 규칙+페이지네이션 적용 가능)');
     return interaction.reply({ embeds: [embed] });
   }
 
   if (cmd === '지난주점수') {
     const embed = new EmbedBuilder()
       .setTitle('지난주 점수')
-      .setDescription('※ 공용 명령은 현재 “요약 안내”만 유지 중입니다.');
+      .setDescription('※ 공용 명령은 현재 “요약 안내”만 유지 중입니다. (요청 시 동일 규칙+페이지네이션 적용 가능)');
     return interaction.reply({ embeds: [embed] });
   }
 
@@ -1404,13 +1392,8 @@ client.login(TOKEN);
 1) Railway Variables:
    - TOKEN=...
    - GOOGLE_SA_JSON={서비스계정 JSON 전체}
-   - (선택) MAJOR_SHEET_NAME=표40_2
-   - (선택) LTCOL_SHEET_NAME=표41_2
 2) 구글 시트 공유: 서비스계정 이메일 편집자로 공유
-3) 탭(시트) 구조:
-   - A~I : 사진처럼 보이는 컬럼
-   - J : 기준일(reportDate)  (숨김 추천)
-   - K : userId             (숨김 추천)
+3) 시트 탭 이름: '소령', '중령'
 4) package.json dependencies:
    - discord.js
    - node-cron
