@@ -899,41 +899,39 @@ client.on('interactionCreate', async interaction => {
     dayTotalsCache.delete(`${is소령 ? '소령' : '중령'}|${date}`);
     saveData();
 
-    // ================== ✅ 구글 시트 저장 (요청하신 컬럼 순서로만) ==================
-    try {
-      const photoCells = photoAttachments.slice(0, 10).map(a => toImageFormula(a.url));
-
-      if (is소령) {
-        // 소령: 일자 / 닉네임 / 권한지급 / 랭크변경 / 팀변경 / 보직모집 / 인게임시험 (이 순서)
-        await appendRowToSheet('소령!A:Z', [
-          date,
-          displayName,
-          input.권한지급,
-          input.랭크변경,
-          input.팀변경,
-          input.보직모집,
-          input.인게임시험,
-          ...photoCells // ✅ 사진은 뒤에만 붙음(앞 순서 유지)
-        ]);
-      } else {
-        // 중령: 일자 / 닉네임 / 역할지급 / 인증 / 서버역할 / 감찰 / 인게임시험 / 코호스트 / 피드백 (이 순서)
-        await appendRowToSheet('중령!A:Z', [
-          date,
-          displayName,
-          input.역할지급,
-          input.인증,
-          input.서버역할,
-          input.감찰,
-          input.인게임시험,
-          input.코호스트,
-          input.피드백,
-          ...photoCells // ✅ 사진은 뒤에만 붙음(앞 순서 유지)
-        ]);
-      }
-    } catch (e) {
-      console.error('❌ 구글시트 저장 실패:', e);
-      replyText += `\n\n⚠️ 구글 시트 자동 기입에 실패했습니다. Railway Logs를 확인하세요.`;
-    }
+// ================== ✅ 구글 시트 저장 (증거사진은 저장하지 않음) ==================
+try {
+  if (is소령) {
+    // 소령: 일자 / 닉네임 / 권한지급 / 랭크변경 / 팀변경 / 보직/모집 / 인게임시험
+    await appendRowToSheet('소령!A:K', [
+      date,
+      displayName,
+      input.권한지급,
+      input.랭크변경,
+      input.팀변경,
+      input.보직모집,
+      input.인게임시험
+      // H~K는 시트 수식으로 자동 계산 (행정총건수/추가점수/행정점수/최종총점)
+    ]);
+  } else {
+    // 중령: 일자 / 닉네임 / 역할지급 / 인증 / 서버역할요청 / 감찰 / 인게임시험 / 코호스트 / 피드백
+    await appendRowToSheet('중령!A:M', [
+      date,
+      displayName,
+      input.역할지급,
+      input.인증,
+      input.서버역할,
+      input.감찰,
+      input.인게임시험,
+      input.코호스트,
+      input.피드백
+      // J~M은 시트 수식으로 자동 계산
+    ]);
+  }
+} catch (e) {
+  console.error('❌ 구글시트 저장 실패:', e);
+  replyText += `\n\n⚠️ 구글 시트 자동 기입에 실패했습니다. Railway Logs를 확인하세요.`;
+}
 
     // 디스코드 응답(사진 첨부 유지)
     let embeds = [];
@@ -1266,3 +1264,4 @@ client.login(TOKEN);
 
 ※ 시트 탭 이름은 반드시 '소령', '중령' 이어야 합니다.
 */
+
