@@ -241,13 +241,17 @@ function clearPrev7ReportDaysBeforeThisWeek(group) {
 }
 
 // ================== 계산 함수 ==================
+// ✅ 소령: 권한지급 0.5 / 랭크변경 1 / 팀변경 1
 function calculate소령(input) {
-  return (input.권한지급 || 0) * 1 + (input.랭크변경 || 0) * 1 + (input.팀변경 || 0) * 1;
+  return (input.권한지급 || 0) * 0.5
+    + (input.랭크변경 || 0) * 1
+    + (input.팀변경 || 0) * 1;
 }
 function getExtra소령(input) {
   return (input.인게임시험 || 0) * 1 + (input.보직모집 || 0) * 2;
 }
 
+// ✅ 중령: 역할지급 1 / 인증 1.5 / 서버역할 0.5 / 감찰 2
 function calculate중령(input) {
   return (
     (input.인증 || 0) * 1.5 +
@@ -935,7 +939,8 @@ client.on('interactionCreate', async interaction => {
           input.권한지급,
           input.랭크변경,
           input.팀변경,
-          `=INDEX(C:C,ROW())+INDEX(D:D,ROW())+INDEX(E:E,ROW())`,
+          // ✅ 소령 총행정 = 권한지급*0.5 + 랭크변경 + 팀변경
+          `=INDEX(C:C,ROW())*0.5 + INDEX(D:D,ROW()) + INDEX(E:E,ROW())`,
           input.보직모집,
           input.인게임시험
         ]);
@@ -947,7 +952,8 @@ client.on('interactionCreate', async interaction => {
           input.인증,
           input.서버역할,
           input.감찰,
-          `=INDEX(C:C,ROW())+INDEX(D:D,ROW())+INDEX(E:E,ROW())+INDEX(F:F,ROW())`,
+          // ✅ 중령 총행정 = 역할지급*1 + 인증*1.5 + 서버역할*0.5 + 감찰*2
+          `=INDEX(C:C,ROW())*1 + INDEX(D:D,ROW())*1.5 + INDEX(E:E,ROW())*0.5 + INDEX(F:F,ROW())*2`,
           input.인게임시험,
           input.코호스트,
           input.피드백,
@@ -1281,39 +1287,13 @@ client.login(TOKEN);
 /*
 ================== 적용 사항 ==================
 
-[모든 명령어 권한]
-- ADMIN_OVERRIDE_USER_IDS에 등록된 유저(예: 1369378060557877480)는
-  - 소령/중령 역할 없이도 /소령행정보고, /중령행정보고 사용 가능
-  - 감독관 역할 없이도 감독관 전용 명령/버튼(pg|, dg|) 포함 전부 사용 가능
+[행정 총 건수 가중치 반영]
+- 소령: 권한지급 1건=0.5, 랭크변경 1건=1, 팀변경 1건=1
+- 중령: 역할지급 1건=1, 인증 1건=1.5, 서버역할 1건=0.5, 감찰 1건=2
 
-[표시 문구 변경]
-- /소령행정보고, /중령행정보고 옵션 설명: "스카웃/모집"
-- 보고 완료 메시지 출력: "스카웃/모집"
-(옵션 key는 그대로 '보직모집' 사용)
+[구글 시트 - 총행정 수식 반영]
+- 소령 F열: =C*0.5 + D + E
+- 중령 G열: =C*1 + D*1.5 + E*0.5 + F*2
 
-[구글 시트 - 컬럼]
-(1) 소령 탭
-- A: 일자
-- B: 닉네임(displayName)
-- C: 권한지급
-- D: 랭크변경
-- E: 팀변경
-- F: 총 행정 건수 (=C+D+E)
-- G: 스카웃/모집(보직모집)
-- H: 인게임시험
-
-(2) 중령 탭
-- A: 일자
-- B: 닉네임(displayName)
-- C: 역할지급
-- D: 인증
-- E: 서버역할
-- F: 감찰
-- G: 총 행정 건수 (=C+D+E+F)
-- H: 인게임시험
-- I: 코호스트
-- J: 피드백
-- K: 스카웃/모집(보직모집)
-
-※ 시트 탭 이름은 반드시 '소령', '중령' 이어야 합니다.
+기타 기존 기능(권한오버라이드/페이지네이션/주간초기화/증거사진 시트 미저장 등) 유지
 */
