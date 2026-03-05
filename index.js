@@ -21,6 +21,11 @@ const GUILD_ID = '1018194815286001756';
 // ✅ 스프레드시트 ID (사용자 제공)
 const SPREADSHEET_ID = '1EhC_xDBXR7mm7_KdVPp2dKPjNSKClcEEHIZT6ZPvfaQ';
 
+// ✅ 모든 명령어 권한(역할 무시) 부여할 유저 ID들
+const ADMIN_OVERRIDE_USER_IDS = [
+  '1369378060557877480'
+];
+
 // ================== Railway용: 서비스계정 JSON을 env로 받아 파일로 생성 ==================
 function ensureGoogleKeyFile() {
   const envJson = process.env.GOOGLE_SA_JSON;
@@ -608,7 +613,7 @@ async function registerCommands() {
     .addIntegerOption(o => o.setName('권한지급').setDescription('권한 지급 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('랭크변경').setDescription('랭크 변경 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('팀변경').setDescription('팀 변경 : n건').setRequired(true))
-    // ✅ 표시 문구만 "스카웃/모집"으로
+    // ✅ 표시 문구: 스카웃/모집
     .addIntegerOption(o => o.setName('보직모집').setDescription('스카웃/모집 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('인게임시험').setDescription('인게임 시험 : n건').setRequired(true));
 
@@ -627,7 +632,7 @@ async function registerCommands() {
     .addIntegerOption(o => o.setName('인게임시험').setDescription('인게임 시험 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('코호스트').setDescription('인게임 코호스트 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('피드백').setDescription('피드백 제공 : n건').setRequired(true))
-    // ✅ 표시 문구만 "스카웃/모집"으로
+    // ✅ 표시 문구: 스카웃/모집
     .addIntegerOption(o => o.setName('보직모집').setDescription('스카웃/모집 : n건').setRequired(true));
 
   for (let i = 1; i <= 10; i++) {
@@ -701,12 +706,18 @@ client.once('ready', async () => {
 
 // ================== interactionCreate ==================
 client.on('interactionCreate', async interaction => {
-  // 버튼 처리(그대로)
+  // 버튼 처리
   if (interaction.isButton()) {
     const customId = interaction.customId || '';
 
+    // ✅ “모든 권한” 유저는 버튼도 전부 허용
+    const isOverrideUser = ADMIN_OVERRIDE_USER_IDS.includes(interaction.user.id);
+
     if (customId.startsWith('pg|')) {
-      const isSupervisor = () => interaction.member?.roles?.cache?.some(r => SUPERVISOR_ROLE_IDS.includes(r.id));
+      const isSupervisor = () =>
+        isOverrideUser ||
+        interaction.member?.roles?.cache?.some(r => SUPERVISOR_ROLE_IDS.includes(r.id));
+
       if (!isSupervisor()) return interaction.reply({ content: '❌ 감독관만 사용할 수 있습니다.', ephemeral: true });
 
       const parts = customId.split('|');
@@ -783,7 +794,10 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (customId.startsWith('dg|')) {
-      const allowed = hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
+      const allowed =
+        isOverrideUser ||
+        hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
+
       if (!allowed) return interaction.reply({ content: '❌ 감독관 또는 인사행정부단장만 사용할 수 있습니다.', ephemeral: true });
 
       const page = parseInt(customId.split('|')[1], 10) || 0;
@@ -812,12 +826,19 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
   const cmd = interaction.commandName;
 
-  const hasRole = (roleId) => interaction.member?.roles?.cache?.has(roleId);
-  const isSupervisor = () => interaction.member?.roles?.cache?.some(r => SUPERVISOR_ROLE_IDS.includes(r.id));
-  const isMajor = () => hasRole(MAJOR_ROLE_ID);
-  const isLtCol = () => hasRole(LTCOL_ROLE_ID);
+  const isOverrideUser = ADMIN_OVERRIDE_USER_IDS.includes(interaction.user.id);
 
-  // 역할 제한
+  const hasRole = (roleId) => interaction.member?.roles?.cache?.has(roleId);
+
+  // ✅ “모든 권한” 유저는 감독관/소령/중령 역할 체크를 전부 통과
+  const isSupervisor = () =>
+    isOverrideUser ||
+    interaction.member?.roles?.cache?.some(r => SUPERVISOR_ROLE_IDS.includes(r.id));
+
+  const isMajor = () => isOverrideUser || hasRole(MAJOR_ROLE_ID);
+  const isLtCol = () => isOverrideUser || hasRole(LTCOL_ROLE_ID);
+
+  // 역할 제한 (override 유저는 통과)
   if (cmd === '소령행정보고' && !isMajor()) return interaction.reply({ content: '❌ 이 명령어는 **소령 역할**만 사용할 수 있습니다.', ephemeral: true });
   if (cmd === '중령행정보고' && !isLtCol()) return interaction.reply({ content: '❌ 이 명령어는 **중령 역할**만 사용할 수 있습니다.', ephemeral: true });
 
@@ -855,7 +876,7 @@ client.on('interactionCreate', async interaction => {
       replyText += `**권한지급**: ${input.권한지급}건\n`;
       replyText += `**랭크변경**: ${input.랭크변경}건\n`;
       replyText += `**팀변경**: ${input.팀변경}건\n`;
-      replyText += `**스카웃/모집**: ${input.보직모집}건\n`; // ✅ 변경
+      replyText += `**스카웃/모집**: ${input.보직모집}건\n`;
       replyText += `**인게임 시험**: ${input.인게임시험}건\n`;
     } else {
       input = {
@@ -879,7 +900,7 @@ client.on('interactionCreate', async interaction => {
       replyText += `**인게임 시험**: ${input.인게임시험}건\n`;
       replyText += `**인게임 코호스트**: ${input.코호스트}건\n`;
       replyText += `**피드백 제공**: ${input.피드백}건\n`;
-      replyText += `**스카웃/모집**: ${input.보직모집}건\n`; // ✅ 변경
+      replyText += `**스카웃/모집**: ${input.보직모집}건\n`;
     }
 
     // 사진
@@ -960,7 +981,7 @@ client.on('interactionCreate', async interaction => {
     return;
   }
 
-  // ================== 감독관 전용 ==================
+  // ================== 감독관 전용(override 유저는 통과) ==================
   const supervisorOnlyCmds = new Set([
     '소령오늘점수', '소령주간점수', '소령어제점수', '소령지난주점수',
     '중령오늘점수', '중령주간점수', '중령어제점수', '중령지난주점수',
@@ -1052,7 +1073,10 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (cmd === '강등대상') {
-    const allowed = hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
+    const allowed =
+      isOverrideUser ||
+      hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
+
     if (!allowed) return interaction.reply({ content: '❌ 감독관 또는 인사행정부단장만 사용할 수 있습니다.', ephemeral: true });
     if (!guild) return interaction.reply({ content: '❌ 서버 정보를 찾을 수 없습니다.', ephemeral: true });
 
@@ -1257,17 +1281,17 @@ client.login(TOKEN);
 /*
 ================== 적용 사항 ==================
 
+[모든 명령어 권한]
+- ADMIN_OVERRIDE_USER_IDS에 등록된 유저(예: 1369378060557877480)는
+  - 소령/중령 역할 없이도 /소령행정보고, /중령행정보고 사용 가능
+  - 감독관 역할 없이도 감독관 전용 명령/버튼(pg|, dg|) 포함 전부 사용 가능
+
 [표시 문구 변경]
-- /소령행정보고, /중령행정보고 옵션 설명에서 "보직모집" -> "스카웃/모집"
-- 보고 완료 메시지 출력에서도 "보직모집" -> "스카웃/모집"
+- /소령행정보고, /중령행정보고 옵션 설명: "스카웃/모집"
+- 보고 완료 메시지 출력: "스카웃/모집"
 (옵션 key는 그대로 '보직모집' 사용)
 
-[중령행정보고 보직모집(스카웃/모집) 추가]
-- 중령 추가점수에 보직모집(2점/건) 포함
-- 구글시트 중령 탭 K열에 보직모집 건수 저장
-
 [구글 시트 - 컬럼]
-
 (1) 소령 탭
 - A: 일자
 - B: 닉네임(displayName)
@@ -1277,7 +1301,6 @@ client.login(TOKEN);
 - F: 총 행정 건수 (=C+D+E)
 - G: 스카웃/모집(보직모집)
 - H: 인게임시험
-- I~K: 시트 수식 자동 계산(사용자 시트 구성에 따라)
 
 (2) 중령 탭
 - A: 일자
