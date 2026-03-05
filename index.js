@@ -257,7 +257,7 @@ function calculate중령(input) {
   );
 }
 
-// ✅ 중령 추가점수: 스카웃/모집(보직모집) 2점/건 포함
+// ✅ 중령 추가점수: 스카웃/모집(=보직모집) 2점/건 포함
 function getExtra중령(input) {
   return (
     (input.인게임시험 || 0) * 1 +
@@ -613,7 +613,7 @@ async function registerCommands() {
     .addIntegerOption(o => o.setName('권한지급').setDescription('권한 지급 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('랭크변경').setDescription('랭크 변경 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('팀변경').setDescription('팀 변경 : n건').setRequired(true))
-    // ✅ 표시 문구: 스카웃/모집
+    // ✅ 표시 문구: 스카웃/모집 (name은 보직모집 유지)
     .addIntegerOption(o => o.setName('보직모집').setDescription('스카웃/모집 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('인게임시험').setDescription('인게임 시험 : n건').setRequired(true));
 
@@ -632,8 +632,8 @@ async function registerCommands() {
     .addIntegerOption(o => o.setName('인게임시험').setDescription('인게임 시험 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('코호스트').setDescription('인게임 코호스트 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('피드백').setDescription('피드백 제공 : n건').setRequired(true))
-    // ✅ 표시 문구: 스카웃/모집
-    .addIntegerOption(o => o.setName('보직모집').setDescription('스카웃/모집 : n건').setRequired(true));
+    // ✅ 핵심: 옵션 name을 "스카웃모집"으로 변경 (Discord 옵션 name에 "/" 불가)
+    .addIntegerOption(o => o.setName('스카웃모집').setDescription('스카웃/모집 : n건').setRequired(true));
 
   for (let i = 1; i <= 10; i++) {
     중령Command.addAttachmentOption(o =>
@@ -879,6 +879,7 @@ client.on('interactionCreate', async interaction => {
       replyText += `**스카웃/모집**: ${input.보직모집}건\n`;
       replyText += `**인게임 시험**: ${input.인게임시험}건\n`;
     } else {
+      // ✅ 중령: 옵션 name이 "스카웃모집" 이므로 여기서 읽을 때도 동일하게
       input = {
         역할지급: interaction.options.getInteger('역할지급'),
         인증: interaction.options.getInteger('인증'),
@@ -887,7 +888,7 @@ client.on('interactionCreate', async interaction => {
         인게임시험: interaction.options.getInteger('인게임시험'),
         코호스트: interaction.options.getInteger('코호스트'),
         피드백: interaction.options.getInteger('피드백'),
-        보직모집: interaction.options.getInteger('보직모집')
+        보직모집: interaction.options.getInteger('스카웃모집') // ✅ 핵심 변경
       };
 
       adminCount = calculate중령(input);
@@ -940,6 +941,7 @@ client.on('interactionCreate', async interaction => {
           input.인게임시험
         ]);
       } else {
+        // ✅ 중령: K열에 스카웃/모집(보직모집) 저장
         await appendRowToSheet('중령!A:K', [
           date,
           displayName,
@@ -1281,39 +1283,15 @@ client.login(TOKEN);
 /*
 ================== 적용 사항 ==================
 
+[중령 행정보고 UI 표시]
+- Discord 옵션 name에는 "/" 불가 → 중령 옵션 name을 "스카웃모집"으로 변경
+- 하지만 실제 계산/시트 저장 변수는 "보직모집"으로 유지 (input.보직모집)
+
+[중령 구글시트]
+- 중령 탭 K열에 스카웃/모집(보직모집) 건수 저장
+
 [모든 명령어 권한]
-- ADMIN_OVERRIDE_USER_IDS에 등록된 유저(예: 1369378060557877480)는
+- ADMIN_OVERRIDE_USER_IDS에 등록된 유저는
   - 소령/중령 역할 없이도 /소령행정보고, /중령행정보고 사용 가능
-  - 감독관 역할 없이도 감독관 전용 명령/버튼(pg|, dg|) 포함 전부 사용 가능
-
-[표시 문구 변경]
-- /소령행정보고, /중령행정보고 옵션 설명: "스카웃/모집"
-- 보고 완료 메시지 출력: "스카웃/모집"
-(옵션 key는 그대로 '보직모집' 사용)
-
-[구글 시트 - 컬럼]
-(1) 소령 탭
-- A: 일자
-- B: 닉네임(displayName)
-- C: 권한지급
-- D: 랭크변경
-- E: 팀변경
-- F: 총 행정 건수 (=C+D+E)
-- G: 스카웃/모집(보직모집)
-- H: 인게임시험
-
-(2) 중령 탭
-- A: 일자
-- B: 닉네임(displayName)
-- C: 역할지급
-- D: 인증
-- E: 서버역할
-- F: 감찰
-- G: 총 행정 건수 (=C+D+E+F)
-- H: 인게임시험
-- I: 코호스트
-- J: 피드백
-- K: 스카웃/모집(보직모집)
-
-※ 시트 탭 이름은 반드시 '소령', '중령' 이어야 합니다.
+  - 감독관 전용 명령/버튼 포함 전부 사용 가능
 */
