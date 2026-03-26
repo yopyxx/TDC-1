@@ -58,11 +58,6 @@ async function appendRowToSheet(rangeA1, values) {
   });
 }
 
-function toImageFormula(url) {
-  return `=IMAGE("${url}")`;
-  // return `=HYPERLINK("${url}","사진")`;
-}
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -242,22 +237,33 @@ function clearPrev7ReportDaysBeforeThisWeek(group) {
 
 // ================== 계산 함수 ==================
 function calculate소령(input) {
-  return (input.권한지급 || 0) * 1 + (input.랭크변경 || 0) * 1 + (input.팀변경 || 0) * 1;
+  return (
+    (input.권한지급 || 0) * 0.5 +
+    (input.랭크변경 || 0) * 1 +
+    (input.팀변경 || 0) * 1
+  );
 }
+
 function getExtra소령(input) {
   return (input.인게임시험 || 0) * 1 + (input.보직모집 || 0) * 2;
 }
 
 function calculate중령(input) {
   return (
-    (input.인증 || 0) * 1.5 +
     (input.역할지급 || 0) * 1 +
-    (input.감찰 || 0) * 2 +
-    (input.서버역할 || 0) * 0.5
+    (input.인증 || 0) * 1.5 +
+    (input.서버역할 || 0) * 0.5 +
+    (input.감찰 || 0) * 2
   );
 }
+
 function getExtra중령(input) {
-  return (input.인게임시험 || 0) * 1 + (input.코호스트 || 0) * 1 + (input.피드백 || 0) * 2;
+  return (
+    (input.인게임시험 || 0) * 1 +
+    (input.코호스트 || 0) * 1 +
+    (input.피드백 || 0) * 2 +
+    (input.보직모집 || 0) * 2
+  );
 }
 
 function getTopPercentFromRank(rank, n) {
@@ -291,9 +297,6 @@ async function getEligibleMemberIdsByRank(guild, rankName) {
 }
 
 // ================== 점수 계산 핵심 ==================
-// ✅ 최소업무 미달이어도 "추가점수는 그대로 적용"
-// - 미달자: adminPoints = 0, extraPoints = min(30, extraRaw), total = extraPoints
-// - 충족자: adminPoints + extraPoints
 function buildDayScoresForMembers(rankName, dateStr, memberIds) {
   const is소령 = rankName === '소령';
   const minRequired = is소령 ? 3 : 4;
@@ -625,6 +628,7 @@ async function registerCommands() {
     .addIntegerOption(o => o.setName('인증').setDescription('인증 처리 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('서버역할').setDescription('서버 역할 요청 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('감찰').setDescription('행정 감찰 : n건').setRequired(true))
+    .addIntegerOption(o => o.setName('보직모집').setDescription('보직 가입 요청·모집 시험 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('인게임시험').setDescription('인게임 시험 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('코호스트').setDescription('인게임 코호스트 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('피드백').setDescription('피드백 제공 : n건').setRequired(true));
@@ -823,8 +827,12 @@ client.on('interactionCreate', async interaction => {
   const isLtCol = () => hasRole(LTCOL_ROLE_ID);
 
   // 역할 제한
-  if (cmd === '소령행정보고' && !isMajor()) return interaction.reply({ content: '❌ 이 명령어는 **소령 역할**만 사용할 수 있습니다.', ephemeral: true });
-  if (cmd === '중령행정보고' && !isLtCol()) return interaction.reply({ content: '❌ 이 명령어는 **중령 역할**만 사용할 수 있습니다.', ephemeral: true });
+  if (cmd === '소령행정보고' && !isMajor()) {
+    return interaction.reply({ content: '❌ 이 명령어는 **소령 역할**만 사용할 수 있습니다.', ephemeral: true });
+  }
+  if (cmd === '중령행정보고' && !isLtCol()) {
+    return interaction.reply({ content: '❌ 이 명령어는 **중령 역할**만 사용할 수 있습니다.', ephemeral: true });
+  }
 
   // ================== 행정보고 ==================
   if (cmd === '소령행정보고' || cmd === '중령행정보고') {
@@ -839,7 +847,8 @@ client.on('interactionCreate', async interaction => {
       `**닉네임**: ${mention}\n` +
       `**일자**: ${date}\n\n`;
 
-    let adminCount = 0, extra = 0;
+    let adminCount = 0;
+    let extra = 0;
     let input = null;
 
     if (is소령) {
@@ -859,12 +868,14 @@ client.on('interactionCreate', async interaction => {
       replyText += `**팀변경**: ${input.팀변경}건\n`;
       replyText += `**보직 가입 요청·모집 시험**: ${input.보직모집}건\n`;
       replyText += `**인게임 시험**: ${input.인게임시험}건\n`;
+      replyText += `**총 행정 건수**: ${adminCount}건\n`;
     } else {
       input = {
         역할지급: interaction.options.getInteger('역할지급'),
         인증: interaction.options.getInteger('인증'),
         서버역할: interaction.options.getInteger('서버역할'),
         감찰: interaction.options.getInteger('감찰'),
+        보직모집: interaction.options.getInteger('보직모집'),
         인게임시험: interaction.options.getInteger('인게임시험'),
         코호스트: interaction.options.getInteger('코호스트'),
         피드백: interaction.options.getInteger('피드백')
@@ -877,9 +888,11 @@ client.on('interactionCreate', async interaction => {
       replyText += `**인증 처리**: ${input.인증}건\n`;
       replyText += `**서버 역할 요청**: ${input.서버역할}건\n`;
       replyText += `**행정 감찰**: ${input.감찰}건\n`;
+      replyText += `**보직 가입 요청·모집 시험**: ${input.보직모집}건\n`;
       replyText += `**인게임 시험**: ${input.인게임시험}건\n`;
       replyText += `**인게임 코호스트**: ${input.코호스트}건\n`;
       replyText += `**피드백 제공**: ${input.피드백}건\n`;
+      replyText += `**총 행정 건수**: ${adminCount}건\n`;
     }
 
     const photoAttachments = [];
@@ -887,11 +900,18 @@ client.on('interactionCreate', async interaction => {
       const att = interaction.options.getAttachment(`증거사진${i}`);
       if (att) photoAttachments.push(att);
     }
-    if (photoAttachments.length > 0) replyText += `\n📸 증거 사진 ${photoAttachments.length}장 첨부됨`;
+    if (photoAttachments.length > 0) {
+      replyText += `\n📸 증거 사진 ${photoAttachments.length}장 첨부됨`;
+    }
 
     const group = is소령 ? data.소령 : data.중령;
     if (!group.users[interaction.user.id]) {
-      group.users[interaction.user.id] = { nick: displayName, totalAdmin: 0, totalExtra: 0, daily: {} };
+      group.users[interaction.user.id] = {
+        nick: displayName,
+        totalAdmin: 0,
+        totalExtra: 0,
+        daily: {}
+      };
     }
 
     const u = group.users[interaction.user.id];
@@ -906,29 +926,34 @@ client.on('interactionCreate', async interaction => {
     dayTotalsCache.delete(`${is소령 ? '소령' : '중령'}|${date}`);
     saveData();
 
-    // ================== 구글 시트 저장 (증거사진은 저장하지 않음) ==================
+    // ================== 구글 시트 저장 ==================
     try {
       if (is소령) {
-        await appendRowToSheet('소령!A:K', [
+        // A 날짜 / B 닉네임 / C 권한지급 / D 랭크변경 / E 팀변경 / F 총행정건수 / G 보직모집 / H 인게임시험
+        await appendRowToSheet('소령!A:H', [
           date,
           displayName,
           input.권한지급,
           input.랭크변경,
           input.팀변경,
+          adminCount,
           input.보직모집,
           input.인게임시험
         ]);
       } else {
-        await appendRowToSheet('중령!A:M', [
+        // A 날짜 / B 닉네임 / C 역할지급 / D 인증 / E 서버역할 / F 감찰 / G 총행정건수 / H 인게임시험 / I 코호스트 / J 피드백 / K 보직모집
+        await appendRowToSheet('중령!A:K', [
           date,
           displayName,
           input.역할지급,
           input.인증,
           input.서버역할,
           input.감찰,
+          adminCount,
           input.인게임시험,
           input.코호스트,
-          input.피드백
+          input.피드백,
+          input.보직모집
         ]);
       }
     } catch (e) {
@@ -937,9 +962,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     // ================== 증거사진 처리 ==================
-    // 핵심 수정:
-    // - embed에 att.url 링크를 넣지 않음
-    // - 첨부파일만 전송해서 디스코드 기본 갤러리처럼 한 묶음으로 보이게 처리
+    // embed에 URL을 또 넣지 않고, 첨부파일만 전송
     let files = [];
 
     if (photoAttachments.length > 0) {
@@ -1168,7 +1191,9 @@ client.on('interactionCreate', async interaction => {
     const targetUser = interaction.options.getUser('대상');
     const isAll = interaction.options.getBoolean('전체') === true;
 
-    if (!isAll && !targetUser) return interaction.reply({ content: 'ℹ️ 대상 또는 전체(true)를 선택하세요.', ephemeral: true });
+    if (!isAll && !targetUser) {
+      return interaction.reply({ content: 'ℹ️ 대상 또는 전체(true)를 선택하세요.', ephemeral: true });
+    }
 
     let cleared = 0;
 
@@ -1191,7 +1216,9 @@ client.on('interactionCreate', async interaction => {
 
     const uid = targetUser.id;
     const u = group.users?.[uid];
-    if (!u?.daily?.[date]) return interaction.reply({ content: `ℹ️ ${targetUser} 님은 오늘(${date}) 기록이 없습니다.`, ephemeral: true });
+    if (!u?.daily?.[date]) {
+      return interaction.reply({ content: `ℹ️ ${targetUser} 님은 오늘(${date}) 기록이 없습니다.`, ephemeral: true });
+    }
 
     delete u.daily[date];
     recomputeTotals(group);
@@ -1258,7 +1285,7 @@ if (!TOKEN) {
 client.login(TOKEN);
 
 /*
-================== 적용 사항 ==================
+================== 최종 반영 사항 ==================
 
 1) 역할 ID 변경
 - 감독관: 1480915647922966658
@@ -1267,8 +1294,8 @@ client.login(TOKEN);
 
 2) 최소업무 미달 처리 변경
 - 소령 3 미만 / 중령 4 미만이어도
-  "행정점수는 0점" 처리
-  "추가점수는 그대로 반영"
+  행정점수는 0점
+  추가점수는 그대로 반영
 
 3) 반영 범위
 - 오늘점수
@@ -1279,11 +1306,48 @@ client.login(TOKEN);
 - 자동 스냅샷
 - 내부 일별/주간 합산
 
-4) 구글 시트
-- 기존처럼 증거사진은 저장하지 않음
-- 시트 계산식은 따로 유지 가능
+4) 소령 총 행정 건수 계산
+- 권한지급 = 0.5
+- 랭크변경 = 1
+- 팀변경 = 1
 
-5) 증거사진 중복 버그 수정
+5) 중령 총 행정 건수 계산
+- 역할지급 = 1
+- 인증 = 1.5
+- 서버역할 = 0.5
+- 감찰 = 2
+
+6) 중령 추가점수
+- 인게임시험 = 1
+- 코호스트 = 1
+- 피드백 = 2
+- 보직모집 = 2
+
+7) 구글 시트 저장 형식
+[소령]
+A 날짜
+B 닉네임
+C 권한지급
+D 랭크변경
+E 팀변경
+F 총 행정 건수
+G 보직모집
+H 인게임시험
+
+[중령]
+A 날짜
+B 닉네임
+C 역할지급
+D 인증
+E 서버역할
+F 감찰
+G 총 행정 건수
+H 인게임시험
+I 코호스트
+J 피드백
+K 보직모집
+
+8) 증거사진 중복 버그 수정
 - embed에 사진 URL을 다시 넣지 않음
 - 첨부파일만 한 번에 전송
 - 디스코드 기본 이미지 뷰어에서 한 묶음처럼 열어볼 수 있게 처리
