@@ -68,6 +68,12 @@ const client = new Client({
 });
 
 // ================== 역할 ID ==================
+const FULL_ACCESS_ROLE_IDS = [
+  '1482691735762108486',
+  '1485155863730589860',
+  '1486356471695282317'
+];
+
 const SUPERVISOR_ROLE_IDS = [
   '1480915647922966658', // 감독관
   '1480918241831424040'  // 인사행정부단장
@@ -170,6 +176,10 @@ function clamp(n, lo, hi) {
 
 function hasAnyRole(member, roleIds) {
   return member?.roles?.cache?.some(r => roleIds.includes(r.id));
+}
+
+function hasFullAccess(member) {
+  return hasAnyRole(member, FULL_ACCESS_ROLE_IDS);
 }
 
 function daysSinceJoined(member) {
@@ -286,6 +296,9 @@ async function getEligibleMemberIdsByRank(guild, rankName) {
   const ids = [];
   for (const [, m] of members) {
     if (m.user?.bot) continue;
+
+    // 전체 권한 역할 보유자는 어떤 명령어든 사용할 수 있지만
+    // 점수 대상자 필터에서는 실제 소령/중령 역할 기준으로만 잡음
     if (!m.roles.cache.has(requiredRole)) continue;
 
     const excluded = m.roles.cache.some(r => EXCLUDED_ROLE_IDS.includes(r.id));
@@ -709,8 +722,13 @@ client.on('interactionCreate', async interaction => {
     const customId = interaction.customId || '';
 
     if (customId.startsWith('pg|')) {
-      const isSupervisor = () => interaction.member?.roles?.cache?.some(r => SUPERVISOR_ROLE_IDS.includes(r.id));
-      if (!isSupervisor()) return interaction.reply({ content: '❌ 감독관만 사용할 수 있습니다.', ephemeral: true });
+      const isSupervisor = () =>
+        hasFullAccess(interaction.member) ||
+        interaction.member?.roles?.cache?.some(r => SUPERVISOR_ROLE_IDS.includes(r.id));
+
+      if (!isSupervisor()) {
+        return interaction.reply({ content: '❌ 감독관만 사용할 수 있습니다.', ephemeral: true });
+      }
 
       const parts = customId.split('|');
       const rankName = parts[1];
@@ -792,8 +810,13 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (customId.startsWith('dg|')) {
-      const allowed = hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
-      if (!allowed) return interaction.reply({ content: '❌ 감독관 또는 인사행정부단장만 사용할 수 있습니다.', ephemeral: true });
+      const allowed =
+        hasFullAccess(interaction.member) ||
+        hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
+
+      if (!allowed) {
+        return interaction.reply({ content: '❌ 감독관 또는 인사행정부단장만 사용할 수 있습니다.', ephemeral: true });
+      }
 
       const page = parseInt(customId.split('|')[1], 10) || 0;
       const msgId = interaction.message?.id;
@@ -822,9 +845,11 @@ client.on('interactionCreate', async interaction => {
   const cmd = interaction.commandName;
 
   const hasRole = (roleId) => interaction.member?.roles?.cache?.has(roleId);
-  const isSupervisor = () => interaction.member?.roles?.cache?.some(r => SUPERVISOR_ROLE_IDS.includes(r.id));
-  const isMajor = () => hasRole(MAJOR_ROLE_ID);
-  const isLtCol = () => hasRole(LTCOL_ROLE_ID);
+  const isFullAccess = () => hasFullAccess(interaction.member);
+  const isSupervisor = () =>
+    isFullAccess() || interaction.member?.roles?.cache?.some(r => SUPERVISOR_ROLE_IDS.includes(r.id));
+  const isMajor = () => isFullAccess() || hasRole(MAJOR_ROLE_ID);
+  const isLtCol = () => isFullAccess() || hasRole(LTCOL_ROLE_ID);
 
   // 역할 제한
   if (cmd === '소령행정보고' && !isMajor()) {
@@ -1078,8 +1103,14 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (cmd === '강등대상') {
-    const allowed = hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
-    if (!allowed) return interaction.reply({ content: '❌ 감독관 또는 인사행정부단장만 사용할 수 있습니다.', ephemeral: true });
+    const allowed =
+      hasFullAccess(interaction.member) ||
+      hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
+
+    if (!allowed) {
+      return interaction.reply({ content: '❌ 감독관 또는 인사행정부단장만 사용할 수 있습니다.', ephemeral: true });
+    }
+
     if (!guild) return interaction.reply({ content: '❌ 서버 정보를 찾을 수 없습니다.', ephemeral: true });
 
     const members = await guild.members.fetch();
@@ -1287,17 +1318,22 @@ client.login(TOKEN);
 /*
 ================== 최종 반영 사항 ==================
 
-1) 역할 ID 변경
+1) 전체 명령어 사용 가능 역할 추가
+- 1482691735762108486
+- 1485155863730589860
+- 1486356471695282317
+
+2) 역할 ID 변경
 - 감독관: 1480915647922966658
 - 사령본부: 1480916945963585566
 - 인사행정부단장: 1480918241831424040
 
-2) 최소업무 미달 처리 변경
+3) 최소업무 미달 처리 변경
 - 소령 3 미만 / 중령 4 미만이어도
   행정점수는 0점
   추가점수는 그대로 반영
 
-3) 반영 범위
+4) 반영 범위
 - 오늘점수
 - 어제점수
 - 주간점수
@@ -1306,24 +1342,24 @@ client.login(TOKEN);
 - 자동 스냅샷
 - 내부 일별/주간 합산
 
-4) 소령 총 행정 건수 계산
+5) 소령 총 행정 건수 계산
 - 권한지급 = 0.5
 - 랭크변경 = 1
 - 팀변경 = 1
 
-5) 중령 총 행정 건수 계산
+6) 중령 총 행정 건수 계산
 - 역할지급 = 1
 - 인증 = 1.5
 - 서버역할 = 0.5
 - 감찰 = 2
 
-6) 중령 추가점수
+7) 중령 추가점수
 - 인게임시험 = 1
 - 코호스트 = 1
 - 피드백 = 2
 - 보직모집 = 2
 
-7) 구글 시트 저장 형식
+8) 구글 시트 저장 형식
 [소령]
 A 날짜
 B 닉네임
@@ -1347,7 +1383,7 @@ I 코호스트
 J 피드백
 K 보직모집
 
-8) 증거사진 중복 버그 수정
+9) 증거사진 중복 버그 수정
 - embed에 사진 URL을 다시 넣지 않음
 - 첨부파일만 한 번에 전송
 - 디스코드 기본 이미지 뷰어에서 한 묶음처럼 열어볼 수 있게 처리
