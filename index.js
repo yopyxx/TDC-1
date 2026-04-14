@@ -1,5 +1,3 @@
-// @ts-nocheck
-
 const {
   Client,
   GatewayIntentBits,
