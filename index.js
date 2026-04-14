@@ -16,10 +16,10 @@ const { google } = require('googleapis');
 
 // ================== 설정 ==================
 const TOKEN = process.env.TOKEN;
-const GUILD_ID = '1018194815286001756';
+const GUILD_ID = '1486229581190004748';
 
-// ✅ 스프레드시트 ID
-const SPREADSHEET_ID = '1EhC_xDBXR7mm7_KdVPp2dKPjNSKClcEEHIZT6ZPvfaQ';
+// ✅ 진급 스프레드시트 ID
+const SPREADSHEET_ID = '14XoO78o6PiSQe8FIIBt_OYbbV4frozS5WBviSSSzRBg';
 
 // ================== Railway용: 서비스계정 JSON을 env로 받아 파일로 생성 ==================
 function ensureGoogleKeyFile() {
@@ -33,9 +33,18 @@ function ensureGoogleKeyFile() {
     return filePath;
   }
 
-  fs.writeFileSync(filePath, envJson, 'utf8');
-  console.log(`✅ Google service account key written to: ${filePath}`);
-  return filePath;
+  try {
+    const parsed = JSON.parse(envJson);
+    if (parsed.private_key) {
+      parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+    }
+    fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2), 'utf8');
+    console.log(`✅ Google service account key written to: ${filePath}`);
+    return filePath;
+  } catch (err) {
+    console.error('❌ GOOGLE_SA_JSON 파싱 실패:', err);
+    throw err;
+  }
 }
 
 const GOOGLE_KEYFILE = ensureGoogleKeyFile();
@@ -48,7 +57,6 @@ const gAuth = new google.auth.GoogleAuth({
 
 async function appendRowToSheet(rangeA1, values) {
   const sheets = google.sheets({ version: 'v4', auth: gAuth });
-
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
     range: rangeA1,
@@ -61,44 +69,26 @@ async function appendRowToSheet(rangeA1, values) {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.GuildMembers
   ]
 });
 
 // ================== 역할 ID ==================
-const FULL_ACCESS_ROLE_IDS = [
-  '1482691735762108486',
-  '1485155863730589860',
-  '1486356471695282317'
-];
+const ALL_COMMAND_MANAGER_ROLE_ID = '1489255441492869170'; // 모든 관리 명령어 사용 가능
+const HR_ADMIN_ROLE_ID = '1486229581584142437';           // /강등대상 포함 대상 역할
+const DEMOTION_EXCLUDED_ROLE_ID = '1486229581190004752';  // /강등대상 제외 역할
+const MAJOR_ROLE_ID = '1486229581190004753';              // 소령
+const LTCOL_ROLE_ID = '1486229581190004754';              // 중령
 
-const SUPERVISOR_ROLE_IDS = [
-  '1480915647922966658', // 감독관
-  '1480918241831424040'  // 인사행정부단장
-];
+const MANAGER_ROLE_IDS = [ALL_COMMAND_MANAGER_ROLE_ID];
 
-const MAJOR_ROLE_ID = '1472582859339596091';   // 소령
-const LTCOL_ROLE_ID = '1018447060627894322';   // 중령
+const SCORE_INCLUDED_ROLE_IDS = {
+  소령: MAJOR_ROLE_ID,
+  중령: LTCOL_ROLE_ID
+};
 
-const EXCLUDED_ROLE_IDS = [
-  '1480915647922966658', // 감독관
-  '1480916945963585566', // 사령본부
-  '1480918241831424040'  // 인사행정부단장
-];
-
-const DEMOTION_EXCLUDED_ROLE_IDS = [
-  '1477394729808298167', // 법무교육단
-  '1480915647922966658', // 감독관
-  '1480916945963585566', // 사령본부
-  '1480918241831424040'  // 인사행정부단장
-];
-
-const DEMOTION_ALLOWED_ROLE_IDS = [
-  '1480915647922966658', // 감독관
-  '1480918241831424040'  // 인사행정부단장
-];
+const DEMOTION_REQUIRED_ROLE_IDS = [HR_ADMIN_ROLE_ID];
+const DEMOTION_ALLOWED_ROLE_IDS = [ALL_COMMAND_MANAGER_ROLE_ID];
 
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'admin_data.json');
@@ -110,7 +100,7 @@ let data = {
 };
 
 // ================== 런타임 캐시 ==================
-const dayTotalsCache = new Map(); // `${rankName}|${dateStr}` -> Map(userId->total)
+const dayTotalsCache = new Map();
 const paginationSessions = new Map();
 
 // ================== 데이터 저장 ==================
@@ -148,7 +138,7 @@ function saveData() {
 
 // ================== 날짜 (새벽 2시 기준) ==================
 function getReportDate() {
-  const now = new Date(Date.now() + 9 * 60 * 60 * 1000); // KST
+  const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
   if (now.getHours() < 2) now.setDate(now.getDate() - 1);
   return now.toISOString().split('T')[0];
 }
@@ -165,7 +155,7 @@ function getYesterdayDate() {
 
 function getSundayWeekStart(dateStr) {
   const d = new Date(`${dateStr}T12:00:00+09:00`);
-  const day = d.getUTCDay(); // 0=일
+  const day = d.getUTCDay();
   return addDays(dateStr, -day);
 }
 
@@ -176,10 +166,6 @@ function clamp(n, lo, hi) {
 
 function hasAnyRole(member, roleIds) {
   return member?.roles?.cache?.some(r => roleIds.includes(r.id));
-}
-
-function hasFullAccess(member) {
-  return hasAnyRole(member, FULL_ACCESS_ROLE_IDS);
 }
 
 function daysSinceJoined(member) {
@@ -195,15 +181,6 @@ function getRankNameForMember(member) {
   if (hasMajor) return '소령';
   if (hasLtCol) return '중령';
   return null;
-}
-
-function getAllDateKeysForRank(rankName) {
-  const group = rankName === '소령' ? data.소령 : data.중령;
-  const set = new Set();
-  for (const u of Object.values(group.users || {})) {
-    for (const k of Object.keys(u?.daily || {})) set.add(k);
-  }
-  return Array.from(set).sort();
 }
 
 function recomputeTotals(group) {
@@ -225,10 +202,8 @@ function recomputeTotals(group) {
 function clearPrev7ReportDaysBeforeThisWeek(group) {
   const today = getReportDate();
   const thisWeekStart = getSundayWeekStart(today);
-
   const rangeStart = addDays(thisWeekStart, -7);
   const rangeEnd = thisWeekStart;
-
   let clearedEntries = 0;
 
   for (const u of Object.values(group.users || {})) {
@@ -246,33 +221,23 @@ function clearPrev7ReportDaysBeforeThisWeek(group) {
 }
 
 // ================== 계산 함수 ==================
-function calculate소령(input) {
+// 행정 건수 계산
+// 랭크변경 x1, 인증 x1, 행정요청 x1, 그룹랭크요청 ÷2, 서버역할요청 ÷2
+function calculateAdminUnits(input) {
   return (
-    (input.권한지급 || 0) * 0.5 +
     (input.랭크변경 || 0) * 1 +
-    (input.팀변경 || 0) * 1
+    (input.인증 || 0) * 1 +
+    (input.행정요청 || 0) * 1 +
+    Math.floor((input.그룹랭크요청 || 0) / 2) +
+    Math.floor((input.서버역할요청 || 0) / 2)
   );
 }
 
-function getExtra소령(input) {
-  return (input.인게임시험 || 0) * 1 + (input.보직모집 || 0) * 2;
-}
-
-function calculate중령(input) {
+// 추가점수 계산 (보직모집/모집시험: 인당 2점, 인게임시험: 1점, 최대 30점)
+function calculateExtraPoints(input) {
   return (
-    (input.역할지급 || 0) * 1 +
-    (input.인증 || 0) * 1.5 +
-    (input.서버역할 || 0) * 0.5 +
-    (input.감찰 || 0) * 2
-  );
-}
-
-function getExtra중령(input) {
-  return (
-    (input.인게임시험 || 0) * 1 +
-    (input.코호스트 || 0) * 1 +
-    (input.피드백 || 0) * 2 +
-    (input.보직모집 || 0) * 2
+    (input.보직모집 || 0) * 2 +
+    (input.인게임시험 || 0) * 1
   );
 }
 
@@ -291,19 +256,11 @@ function getAdminPointsByPercentile(pct) {
 
 async function getEligibleMemberIdsByRank(guild, rankName) {
   const members = await guild.members.fetch();
-  const requiredRole = rankName === '소령' ? MAJOR_ROLE_ID : LTCOL_ROLE_ID;
-
+  const requiredRole = SCORE_INCLUDED_ROLE_IDS[rankName];
   const ids = [];
   for (const [, m] of members) {
     if (m.user?.bot) continue;
-
-    // 전체 권한 역할 보유자는 어떤 명령어든 사용할 수 있지만
-    // 점수 대상자 필터에서는 실제 소령/중령 역할 기준으로만 잡음
     if (!m.roles.cache.has(requiredRole)) continue;
-
-    const excluded = m.roles.cache.some(r => EXCLUDED_ROLE_IDS.includes(r.id));
-    if (excluded) continue;
-
     ids.push(m.id);
   }
   return ids;
@@ -312,7 +269,7 @@ async function getEligibleMemberIdsByRank(guild, rankName) {
 // ================== 점수 계산 핵심 ==================
 function buildDayScoresForMembers(rankName, dateStr, memberIds) {
   const is소령 = rankName === '소령';
-  const minRequired = is소령 ? 3 : 4;
+  const minRequired = is소령 ? 2 : 3;
   const group = is소령 ? data.소령 : data.중령;
 
   const rows = (memberIds || []).map((userId) => {
@@ -320,7 +277,6 @@ function buildDayScoresForMembers(rankName, dateStr, memberIds) {
     const adminUnits = u?.daily?.[dateStr]?.admin ?? 0;
     const extraRaw = u?.daily?.[dateStr]?.extra ?? 0;
     const meetsMin = adminUnits >= minRequired;
-
     const nick = u?.nick || `<@${userId}>`;
 
     return {
@@ -338,17 +294,14 @@ function buildDayScoresForMembers(rankName, dateStr, memberIds) {
 
   const eligible = rows.filter(r => r.meetsMin);
   eligible.sort((a, b) => b.adminUnits - a.adminUnits);
-
   const n = eligible.length;
 
   for (let i = 0; i < n; i++) {
     const cur = eligible[i];
     let start = i;
     while (start > 0 && eligible[start - 1].adminUnits === cur.adminUnits) start--;
-
     const rank = start + 1;
     const pct = getTopPercentFromRank(rank, n);
-
     cur.percentile = pct;
     cur.adminPoints = getAdminPointsByPercentile(pct);
     cur.extraPoints = Math.min(30, cur.extraRaw);
@@ -369,7 +322,7 @@ function getDayTotalsOnly(rankName, dateStr) {
   if (cached) return cached;
 
   const is소령 = rankName === '소령';
-  const minRequired = is소령 ? 3 : 4;
+  const minRequired = is소령 ? 2 : 3;
   const group = is소령 ? data.소령 : data.중령;
 
   const rows = Object.entries(group.users || {}).map(([userId, u]) => {
@@ -381,28 +334,22 @@ function getDayTotalsOnly(rankName, dateStr) {
 
   const eligible = rows.filter(r => r.meetsMin);
   eligible.sort((a, b) => b.adminUnits - a.adminUnits);
-
   const n = eligible.length;
   const totalsMap = new Map();
 
   for (const r of rows) {
-    const extraPoints = Math.min(30, r.extraRaw);
-    totalsMap.set(r.userId, extraPoints);
+    totalsMap.set(r.userId, Math.min(30, r.extraRaw));
   }
 
   for (let i = 0; i < n; i++) {
     const cur = eligible[i];
-
     let start = i;
     while (start > 0 && eligible[start - 1].adminUnits === cur.adminUnits) start--;
-
     const rank = start + 1;
     const pct = getTopPercentFromRank(rank, n);
-
     const adminPoints = getAdminPointsByPercentile(pct);
     const extraPoints = Math.min(30, cur.extraRaw);
     const total = Math.min(100, adminPoints + extraPoints);
-
     totalsMap.set(cur.userId, total);
   }
 
@@ -412,22 +359,18 @@ function getDayTotalsOnly(rankName, dateStr) {
 
 // ================== 임베드/페이지네이션 ==================
 function buildPagerComponents(rankName, mode, key, page, totalPages) {
-  const prevDisabled = page <= 0;
-  const nextDisabled = page >= totalPages - 1;
-
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`pg|${rankName}|${mode}|${key}|${page - 1}`)
       .setLabel('이전 페이지')
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(prevDisabled),
+      .setDisabled(page <= 0),
     new ButtonBuilder()
       .setCustomId(`pg|${rankName}|${mode}|${key}|${page + 1}`)
       .setLabel('다음 페이지')
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(nextDisabled)
+      .setDisabled(page >= totalPages - 1)
   );
-
   return [row];
 }
 
@@ -435,7 +378,6 @@ function createDailyEmbedPaged(rankName, dateStr, fullList, page, pageSize, titl
   const total = fullList.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const p = clamp(page, 0, totalPages - 1);
-
   const start = p * pageSize;
   const slice = fullList.slice(start, start + pageSize);
 
@@ -451,14 +393,13 @@ function createDailyEmbedPaged(rankName, dateStr, fullList, page, pageSize, titl
   return new EmbedBuilder()
     .setTitle(`${rankName} ${titlePrefix} (${dateStr}) (최대 100점)`)
     .setDescription(lines)
-    .setFooter({ text: `페이지 ${p + 1}/${totalPages} · 최소업무 미달자는 행정점수 0점, 추가점수는 그대로 반영` });
+    .setFooter({ text: `페이지 ${p + 1}/${totalPages} · 소령 최소 2건 / 중령 최소 3건 미달 시 행정점수 0점, 추가점수는 그대로 반영` });
 }
 
 function createWeeklyEmbedPaged(rankName, weekStart, weekEnd, fullList, page, pageSize, titlePrefix) {
   const total = fullList.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const p = clamp(page, 0, totalPages - 1);
-
   const start = p * pageSize;
   const slice = fullList.slice(start, start + pageSize);
 
@@ -471,37 +412,37 @@ function createWeeklyEmbedPaged(rankName, weekStart, weekEnd, fullList, page, pa
 
   return new EmbedBuilder()
     .setTitle(`${rankName} ${titlePrefix}`)
-    .setDescription(`**주간 범위(새벽 2시 기준)**: ${weekStart} ~ ${weekEnd} (7일)\n\n${lines}`)
+    .setDescription(`**주간 범위(02시 기준)**: ${weekStart} 02:00 ~ ${addDays(weekEnd, 1)} 02:00\n\n${lines}`)
     .setFooter({ text: `페이지 ${p + 1}/${totalPages} · 주간=일~토(7일) 합산 / 최소업무 미달일도 추가점수는 반영` });
 }
 
-function createDemotionEmbed(list, page, pageSize, totalPages) {
+function createDemotionEmbed(list, page, pageSize, totalPages, title, footerPrefix) {
   const start = page * pageSize;
   const slice = list.slice(start, start + pageSize);
 
   const lines = slice.length
     ? slice.map((x, i) => {
         const rankNo = start + i + 1;
-        return `**${rankNo}위** ${x.mention} — **총합 ${x.totalScore}점** 〔${x.rankName}〕`;
+        return `**${rankNo}위** ${x.mention} — **주간 ${x.totalScore}점** 〔${x.rankName}〕`;
       }).join('\n')
     : '대상이 없습니다.';
 
   return new EmbedBuilder()
-    .setTitle('강등 대상 (총합 150점 미만)')
+    .setTitle(title)
     .setDescription(lines)
-    .setFooter({ text: `페이지 ${page + 1}/${totalPages} · 가입 7일 미만/제외 역할 보유자는 제외됨` });
+    .setFooter({ text: `페이지 ${page + 1}/${totalPages} · ${footerPrefix} 기준 · 가입 7일 미만 제외 / ${HR_ADMIN_ROLE_ID} 역할 보유자만 포함 / ${DEMOTION_EXCLUDED_ROLE_ID} 역할 보유자 제외` });
 }
 
-function buildDemotionComponents(page, totalPages) {
+function buildDemotionComponents(mode, key, page, totalPages) {
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`dg|${page - 1}`)
+        .setCustomId(`dg|${mode}|${key}|${page - 1}`)
         .setLabel('이전 페이지')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(page <= 0),
       new ButtonBuilder()
-        .setCustomId(`dg|${page + 1}`)
+        .setCustomId(`dg|${mode}|${key}|${page + 1}`)
         .setLabel('다음 페이지')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(page >= totalPages - 1)
@@ -512,7 +453,6 @@ function buildDemotionComponents(page, totalPages) {
 // ================== 자동 초기화 ==================
 function pruneOldDaily(keepDays) {
   const cutoff = addDays(getReportDate(), -keepDays);
-
   const pruneUserDaily = (group) => {
     for (const u of Object.values(group.users || {})) {
       if (!u.daily) continue;
@@ -521,17 +461,14 @@ function pruneOldDaily(keepDays) {
       }
     }
   };
-
   pruneUserDaily(data.소령);
   pruneUserDaily(data.중령);
-
   for (const dateKey of Object.keys(data.소령.history.daily || {})) {
     if (dateKey < cutoff) delete data.소령.history.daily[dateKey];
   }
   for (const dateKey of Object.keys(data.중령.history.daily || {})) {
     if (dateKey < cutoff) delete data.중령.history.daily[dateKey];
   }
-
   dayTotalsCache.clear();
 }
 
@@ -561,9 +498,7 @@ function makeDailySnapshot(rankName, dateStr) {
 }
 
 function makeWeeklySnapshot(rankName, weekStart) {
-  const is소령 = rankName === '소령';
-  const group = is소령 ? data.소령 : data.중령;
-
+  const group = rankName === '소령' ? data.소령 : data.중령;
   const weekDates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const totals = {};
 
@@ -591,8 +526,7 @@ function runDailyAutoReset() {
   const y = getYesterdayDate();
   data.소령.history.daily[y] = makeDailySnapshot('소령', y);
   data.중령.history.daily[y] = makeDailySnapshot('중령', y);
-
-  pruneOldDaily(21);
+  pruneOldDaily(28);
   saveData();
   console.log(`🧹 어제 스냅샷 저장 완료 (${y})`);
 }
@@ -607,13 +541,49 @@ function runWeeklyAutoReset() {
 
   data.소령.lastWeekStart = lastWeekStart;
   data.중령.lastWeekStart = lastWeekStart;
-
   data.소령.weekStart = thisWeekStart;
   data.중령.weekStart = thisWeekStart;
 
-  pruneOldWeekly(12);
+  pruneOldWeekly(16);
   saveData();
   console.log(`🔄 주간 초기화 완료 (weekStart=${thisWeekStart}, lastWeekStart=${lastWeekStart})`);
+}
+
+// ================== 강등 대상 계산 ==================
+async function buildDemotionListForWeek(guild, weekStart) {
+  const members = await guild.members.fetch();
+  const weekDates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
+  const eligible = [];
+  for (const [, m] of members) {
+    if (m.user?.bot) continue;
+    const rankName = getRankNameForMember(m);
+    if (!rankName) continue;
+    if (!hasAnyRole(m, DEMOTION_REQUIRED_ROLE_IDS)) continue;
+    if (m.roles.cache.has(DEMOTION_EXCLUDED_ROLE_ID)) continue;
+    if (daysSinceJoined(m) < 7) continue;
+    eligible.push({ member: m, rankName });
+  }
+
+  const list = [];
+  for (const { member, rankName } of eligible) {
+    let totalScore = 0;
+    for (const d of weekDates) {
+      const dayTotals = getDayTotalsOnly(rankName, d);
+      totalScore += (dayTotals.get(member.id) || 0);
+    }
+    if (totalScore < 120) {
+      list.push({
+        userId: member.id,
+        mention: `<@${member.id}>`,
+        rankName,
+        totalScore
+      });
+    }
+  }
+
+  list.sort((a, b) => a.totalScore - b.totalScore);
+  return list;
 }
 
 // ================== 명령어 등록 ==================
@@ -621,70 +591,55 @@ async function registerCommands() {
   const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
   if (!guild) return console.log('서버를 찾을 수 없습니다.');
 
-  const 소령Command = new SlashCommandBuilder()
-    .setName('소령행정보고').setDescription('소령 행정 보고서 (소령 전용)')
-    .addIntegerOption(o => o.setName('권한지급').setDescription('권한 지급 : n건').setRequired(true))
-    .addIntegerOption(o => o.setName('랭크변경').setDescription('랭크 변경 : n건').setRequired(true))
-    .addIntegerOption(o => o.setName('팀변경').setDescription('팀 변경 : n건').setRequired(true))
-    .addIntegerOption(o => o.setName('보직모집').setDescription('보직 가입 요청·모집 시험 : n건').setRequired(true))
-    .addIntegerOption(o => o.setName('인게임시험').setDescription('인게임 시험 : n건').setRequired(true));
-
-  for (let i = 1; i <= 10; i++) {
-    소령Command.addAttachmentOption(o =>
-      o.setName(`증거사진${i}`).setDescription(`증거 사진 ${i}`).setRequired(false)
-    );
-  }
-
-  const 중령Command = new SlashCommandBuilder()
-    .setName('중령행정보고').setDescription('중령 행정 보고서 (중령 전용)')
-    .addIntegerOption(o => o.setName('역할지급').setDescription('역할 지급 : n건').setRequired(true))
+  // ✅ 통합 행정보고 명령어
+  const 행정보고Command = new SlashCommandBuilder()
+    .setName('행정보고')
+    .setDescription('인사교육단 행정 보고서 (소령/중령 역할 전용 / 02시~익일 02시 기준 하루 1회)')
+    .addIntegerOption(o => o.setName('랭크변경').setDescription('랭크 변경 처리 : n건').setRequired(true))
     .addIntegerOption(o => o.setName('인증').setDescription('인증 처리 : n건').setRequired(true))
-    .addIntegerOption(o => o.setName('서버역할').setDescription('서버 역할 요청 : n건').setRequired(true))
-    .addIntegerOption(o => o.setName('감찰').setDescription('행정 감찰 : n건').setRequired(true))
-    .addIntegerOption(o => o.setName('보직모집').setDescription('보직 가입 요청·모집 시험 : n건').setRequired(true))
-    .addIntegerOption(o => o.setName('인게임시험').setDescription('인게임 시험 : n건').setRequired(true))
-    .addIntegerOption(o => o.setName('코호스트').setDescription('인게임 코호스트 : n건').setRequired(true))
-    .addIntegerOption(o => o.setName('피드백').setDescription('피드백 제공 : n건').setRequired(true));
+    .addIntegerOption(o => o.setName('행정요청').setDescription('행정 요청 처리 : n건').setRequired(true))
+    .addIntegerOption(o => o.setName('그룹랭크요청').setDescription('그룹 랭크 요청 처리 : n건 (2건 = 랭크변경 1건)').setRequired(true))
+    .addIntegerOption(o => o.setName('서버역할요청').setDescription('서버 역할 요청 처리 : n건 (2건 = 랭크변경 1건)').setRequired(true))
+    .addIntegerOption(o => o.setName('보직모집').setDescription('보직가입 요청 / 모집시험 : n건').setRequired(true))
+    .addIntegerOption(o => o.setName('인게임시험').setDescription('인게임 비사령부 시험 : n건').setRequired(true));
 
   for (let i = 1; i <= 10; i++) {
-    중령Command.addAttachmentOption(o =>
+    행정보고Command.addAttachmentOption(o =>
       o.setName(`증거사진${i}`).setDescription(`증거 사진 ${i}`).setRequired(false)
     );
   }
 
-  const 소령오늘초기화 = new SlashCommandBuilder()
-    .setName('소령오늘초기화')
-    .setDescription('소령 오늘 기록 초기화 (감독관) - 특정 유저 또는 전체')
-    .addUserOption(o => o.setName('대상').setDescription('초기화할 대상 유저(선택)').setRequired(false))
-    .addBooleanOption(o => o.setName('전체').setDescription('전체 유저를 오늘 기록 초기화').setRequired(false));
-
-  const 중령오늘초기화 = new SlashCommandBuilder()
-    .setName('중령오늘초기화')
-    .setDescription('중령 오늘 기록 초기화 (감독관) - 특정 유저 또는 전체')
+  // ✅ 오늘초기화 (통합)
+  const 오늘초기화Command = new SlashCommandBuilder()
+    .setName('오늘초기화')
+    .setDescription('오늘 행정보고 기록 초기화 - 특정 유저 또는 전체 (소령/중령 선택)')
+    .addStringOption(o =>
+      o.setName('계급').setDescription('초기화할 계급').setRequired(true)
+        .addChoices({ name: '소령', value: '소령' }, { name: '중령', value: '중령' })
+    )
     .addUserOption(o => o.setName('대상').setDescription('초기화할 대상 유저(선택)').setRequired(false))
     .addBooleanOption(o => o.setName('전체').setDescription('전체 유저를 오늘 기록 초기화').setRequired(false));
 
   await guild.commands.set([
-    소령Command, 중령Command,
+    행정보고Command.toJSON(),
 
-    new SlashCommandBuilder().setName('소령오늘점수').setDescription('소령 오늘 점수 (감독관 전용)'),
-    new SlashCommandBuilder().setName('중령오늘점수').setDescription('중령 오늘 점수 (감독관 전용)'),
-    new SlashCommandBuilder().setName('소령주간점수').setDescription('소령 주간 점수 (감독관 전용)'),
-    new SlashCommandBuilder().setName('중령주간점수').setDescription('중령 주간 점수 (감독관 전용)'),
-    new SlashCommandBuilder().setName('소령어제점수').setDescription('소령 어제 점수 (감독관 전용)'),
-    new SlashCommandBuilder().setName('중령어제점수').setDescription('중령 어제 점수 (감독관 전용)'),
-    new SlashCommandBuilder().setName('소령지난주점수').setDescription('소령 지난주 점수 (감독관 전용)'),
-    new SlashCommandBuilder().setName('중령지난주점수').setDescription('중령 지난주 점수 (감독관 전용)'),
+    new SlashCommandBuilder().setName('소령오늘점수').setDescription('소령 오늘 점수 조회').toJSON(),
+    new SlashCommandBuilder().setName('중령오늘점수').setDescription('중령 오늘 점수 조회').toJSON(),
+    new SlashCommandBuilder().setName('소령이번주점수').setDescription('소령 이번 주 점수 조회').toJSON(),
+    new SlashCommandBuilder().setName('중령이번주점수').setDescription('중령 이번 주 점수 조회').toJSON(),
+    new SlashCommandBuilder().setName('소령어제점수').setDescription('소령 어제 점수 조회').toJSON(),
+    new SlashCommandBuilder().setName('중령어제점수').setDescription('중령 어제 점수 조회').toJSON(),
+    new SlashCommandBuilder().setName('소령지난주점수').setDescription('소령 지난주 점수 조회').toJSON(),
+    new SlashCommandBuilder().setName('중령지난주점수').setDescription('중령 지난주 점수 조회').toJSON(),
 
-    new SlashCommandBuilder().setName('어제점수').setDescription('소령/중령 어제 점수 한 번에 보기 (감독관 전용)'),
-    new SlashCommandBuilder().setName('지난주점수').setDescription('소령/중령 지난주 점수 한 번에 보기 (감독관 전용)'),
+    new SlashCommandBuilder().setName('어제점수').setDescription('소령/중령 어제 점수 요약 안내').toJSON(),
 
-    소령오늘초기화,
-    중령오늘초기화,
-    new SlashCommandBuilder().setName('초기화주간').setDescription('주간 전체 초기화 (감독관)'),
-    new SlashCommandBuilder().setName('행정통계').setDescription('전체 통계 (감독관)'),
+    오늘초기화Command.toJSON(),
+    new SlashCommandBuilder().setName('초기화주간').setDescription('주간 전체 초기화').toJSON(),
+    new SlashCommandBuilder().setName('행정통계').setDescription('전체 통계').toJSON(),
 
-    new SlashCommandBuilder().setName('강등대상').setDescription('총합 점수 150점 미만 강등 대상 조회 (감독관/인사행정부단장)')
+    new SlashCommandBuilder().setName('강등대상').setDescription('이번 주 주간 총합 120점 미만 강등 대상 조회').toJSON(),
+    new SlashCommandBuilder().setName('지난주강등대상').setDescription('지난 주 주간 총합 120점 미만 강등 대상 조회').toJSON()
   ]);
 
   console.log('✅ 명령어 등록 완료');
@@ -697,14 +652,12 @@ client.once('ready', async () => {
 
   const today = getReportDate();
   const thisWeekStart = getSundayWeekStart(today);
-
   if (!data.소령.weekStart) data.소령.weekStart = thisWeekStart;
   if (!data.중령.weekStart) data.중령.weekStart = thisWeekStart;
   saveData();
 
   if (!fs.existsSync(GOOGLE_KEYFILE)) {
     console.log(`⚠️ GOOGLE KEYFILE을 찾을 수 없습니다: ${GOOGLE_KEYFILE}`);
-    console.log('   Railway Variables에 GOOGLE_SA_JSON을 추가했는지 확인하세요.');
   }
 
   await registerCommands();
@@ -717,18 +670,14 @@ client.once('ready', async () => {
 
 // ================== interactionCreate ==================
 client.on('interactionCreate', async interaction => {
-  // 버튼 처리
+
+  // ================== 버튼 처리 ==================
   if (interaction.isButton()) {
     const customId = interaction.customId || '';
 
     if (customId.startsWith('pg|')) {
-      const isSupervisor = () =>
-        hasFullAccess(interaction.member) ||
-        interaction.member?.roles?.cache?.some(r => SUPERVISOR_ROLE_IDS.includes(r.id));
-
-      if (!isSupervisor()) {
-        return interaction.reply({ content: '❌ 감독관만 사용할 수 있습니다.', ephemeral: true });
-      }
+      const isManager = () => interaction.member?.roles?.cache?.some(r => MANAGER_ROLE_IDS.includes(r.id));
+      if (!isManager()) return interaction.reply({ content: '❌ 지정된 관리 역할만 사용할 수 있습니다.', ephemeral: true });
 
       const parts = customId.split('|');
       const rankName = parts[1];
@@ -757,11 +706,7 @@ client.on('interactionCreate', async interaction => {
 
           const totals = {};
           for (const uid of memberIds) {
-            totals[uid] = {
-              userId: uid,
-              nick: group.users?.[uid]?.nick || `<@${uid}>`,
-              weeklyTotal: 0
-            };
+            totals[uid] = { userId: uid, nick: group.users?.[uid]?.nick || `<@${uid}>`, weeklyTotal: 0 };
           }
 
           for (const d of weekDates) {
@@ -784,25 +729,20 @@ client.on('interactionCreate', async interaction => {
         const dateStr = s.key;
         const totalPages = Math.max(1, Math.ceil(s.list.length / pageSize));
         const p = clamp(page, 0, totalPages - 1);
-
         const titlePrefix = s.mode === 'today' ? '오늘 점수' : '어제 점수';
         const embed = createDailyEmbedPaged(rankName, dateStr, s.list, p, pageSize, titlePrefix);
         const components = buildPagerComponents(rankName, s.mode, s.key, p, totalPages);
-
         return interaction.update({ embeds: [embed], components });
       }
 
       if (s.mode === 'week' || s.mode === 'lastweek') {
         const weekStart = s.key;
         const weekEnd = addDays(weekStart, 6);
-
         const totalPages = Math.max(1, Math.ceil(s.list.length / pageSize));
         const p = clamp(page, 0, totalPages - 1);
-
-        const titlePrefix = s.mode === 'week' ? '주간 점수' : '지난주 점수';
+        const titlePrefix = s.mode === 'week' ? '이번주 점수' : '지난주 점수';
         const embed = createWeeklyEmbedPaged(rankName, weekStart, weekEnd, s.list, p, pageSize, titlePrefix);
         const components = buildPagerComponents(rankName, s.mode, s.key, p, totalPages);
-
         return interaction.update({ embeds: [embed], components });
       }
 
@@ -810,126 +750,85 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (customId.startsWith('dg|')) {
-      const allowed =
-        hasFullAccess(interaction.member) ||
-        hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
+      const allowed = hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
+      if (!allowed) return interaction.reply({ content: '❌ 지정된 관리 역할만 사용할 수 있습니다.', ephemeral: true });
 
-      if (!allowed) {
-        return interaction.reply({ content: '❌ 감독관 또는 인사행정부단장만 사용할 수 있습니다.', ephemeral: true });
-      }
+      const parts = customId.split('|');
+      const mode = parts[1];
+      const key = parts[2];
+      const page = parseInt(parts[3], 10) || 0;
 
-      const page = parseInt(customId.split('|')[1], 10) || 0;
       const msgId = interaction.message?.id;
       const session = msgId ? paginationSessions.get(msgId) : null;
 
-      if (!session || session.mode !== 'demotion') {
-        return interaction.reply({ content: 'ℹ️ 페이지 세션이 만료되었습니다. /강등대상 명령어를 다시 실행하세요.', ephemeral: true });
+      if (!session || session.mode !== mode || session.key !== key) {
+        return interaction.reply({ content: 'ℹ️ 페이지 세션이 만료되었습니다. 명령어를 다시 실행하세요.', ephemeral: true });
       }
 
       const pageSize = session.pageSize || 28;
       const list = session.list || [];
       const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
       const p = clamp(page, 0, totalPages - 1);
+      const isLastWeek = mode === 'demotion_lastweek';
+      const weekStart = key;
+      const weekEnd = addDays(weekStart, 6);
 
-      const embed = createDemotionEmbed(list, p, pageSize, totalPages);
-      const components = buildDemotionComponents(p, totalPages);
+      const embed = createDemotionEmbed(
+        list, p, pageSize, totalPages,
+        isLastWeek
+          ? `지난주 강등 대상 (${weekStart} ~ ${weekEnd}, 주간 총합 120점 미만)`
+          : `강등 대상 (${weekStart} ~ ${weekEnd}, 주간 총합 120점 미만)`,
+        isLastWeek ? '지난 주' : '현재 주'
+      );
 
+      const components = buildDemotionComponents(mode, key, p, totalPages);
       return interaction.update({ embeds: [embed], components });
     }
 
     return;
   }
 
-  // 슬래시
+  // ================== 슬래시 명령어 ==================
   if (!interaction.isChatInputCommand()) return;
   const cmd = interaction.commandName;
 
   const hasRole = (roleId) => interaction.member?.roles?.cache?.has(roleId);
-  const isFullAccess = () => hasFullAccess(interaction.member);
-  const isSupervisor = () =>
-    isFullAccess() || interaction.member?.roles?.cache?.some(r => SUPERVISOR_ROLE_IDS.includes(r.id));
-  const isMajor = () => isFullAccess() || hasRole(MAJOR_ROLE_ID);
-  const isLtCol = () => isFullAccess() || hasRole(LTCOL_ROLE_ID);
+  const isManager = () => interaction.member?.roles?.cache?.some(r => MANAGER_ROLE_IDS.includes(r.id));
+  const isMajor = () => hasRole(MAJOR_ROLE_ID);
+  const isLtCol = () => hasRole(LTCOL_ROLE_ID);
 
-  // 역할 제한
-  if (cmd === '소령행정보고' && !isMajor()) {
-    return interaction.reply({ content: '❌ 이 명령어는 **소령 역할**만 사용할 수 있습니다.', ephemeral: true });
-  }
-  if (cmd === '중령행정보고' && !isLtCol()) {
-    return interaction.reply({ content: '❌ 이 명령어는 **중령 역할**만 사용할 수 있습니다.', ephemeral: true });
-  }
+  // ================== /행정보고 (통합) ==================
+  if (cmd === '행정보고') {
+    // 소령 또는 중령 역할 확인
+    if (!isMajor() && !isLtCol()) {
+      return interaction.reply({
+        content: '❌ 이 명령어는 **소령**(<@&1486229581190004753>) 또는 **중령**(<@&1486229581190004754>) 역할만 사용할 수 있습니다.',
+        ephemeral: true
+      });
+    }
 
-  // ================== 행정보고 ==================
-  if (cmd === '소령행정보고' || cmd === '중령행정보고') {
-    const is소령 = cmd === '소령행정보고';
+    // 소령/중령 자동 판별 (중령 우선)
+    const rankName = isLtCol() ? '중령' : '소령';
     const date = getReportDate();
-
     const mention = `<@${interaction.user.id}>`;
     const displayName = interaction.member?.displayName || interaction.user.username;
 
-    let replyText =
-      `✅ **${is소령 ? '소령' : '중령'} 보고 완료!**\n` +
-      `**닉네임**: ${mention}\n` +
-      `**일자**: ${date}\n\n`;
+    const input = {
+      랭크변경: interaction.options.getInteger('랭크변경'),
+      인증: interaction.options.getInteger('인증'),
+      행정요청: interaction.options.getInteger('행정요청'),
+      그룹랭크요청: interaction.options.getInteger('그룹랭크요청'),
+      서버역할요청: interaction.options.getInteger('서버역할요청'),
+      보직모집: interaction.options.getInteger('보직모집'),
+      인게임시험: interaction.options.getInteger('인게임시험')
+    };
 
-    let adminCount = 0;
-    let extra = 0;
-    let input = null;
+    // 행정 건수 계산 (그룹랭크요청, 서버역할요청은 2건당 1건으로 치환)
+    const adminCount = calculateAdminUnits(input);
+    const extra = calculateExtraPoints(input);
 
-    if (is소령) {
-      input = {
-        권한지급: interaction.options.getInteger('권한지급'),
-        랭크변경: interaction.options.getInteger('랭크변경'),
-        팀변경: interaction.options.getInteger('팀변경'),
-        보직모집: interaction.options.getInteger('보직모집'),
-        인게임시험: interaction.options.getInteger('인게임시험')
-      };
+    const group = rankName === '소령' ? data.소령 : data.중령;
 
-      adminCount = calculate소령(input);
-      extra = getExtra소령(input);
-
-      replyText += `**권한지급**: ${input.권한지급}건\n`;
-      replyText += `**랭크변경**: ${input.랭크변경}건\n`;
-      replyText += `**팀변경**: ${input.팀변경}건\n`;
-      replyText += `**보직 가입 요청·모집 시험**: ${input.보직모집}건\n`;
-      replyText += `**인게임 시험**: ${input.인게임시험}건\n`;
-      replyText += `**총 행정 건수**: ${adminCount}건\n`;
-    } else {
-      input = {
-        역할지급: interaction.options.getInteger('역할지급'),
-        인증: interaction.options.getInteger('인증'),
-        서버역할: interaction.options.getInteger('서버역할'),
-        감찰: interaction.options.getInteger('감찰'),
-        보직모집: interaction.options.getInteger('보직모집'),
-        인게임시험: interaction.options.getInteger('인게임시험'),
-        코호스트: interaction.options.getInteger('코호스트'),
-        피드백: interaction.options.getInteger('피드백')
-      };
-
-      adminCount = calculate중령(input);
-      extra = getExtra중령(input);
-
-      replyText += `**역할지급**: ${input.역할지급}건\n`;
-      replyText += `**인증 처리**: ${input.인증}건\n`;
-      replyText += `**서버 역할 요청**: ${input.서버역할}건\n`;
-      replyText += `**행정 감찰**: ${input.감찰}건\n`;
-      replyText += `**보직 가입 요청·모집 시험**: ${input.보직모집}건\n`;
-      replyText += `**인게임 시험**: ${input.인게임시험}건\n`;
-      replyText += `**인게임 코호스트**: ${input.코호스트}건\n`;
-      replyText += `**피드백 제공**: ${input.피드백}건\n`;
-      replyText += `**총 행정 건수**: ${adminCount}건\n`;
-    }
-
-    const photoAttachments = [];
-    for (let i = 1; i <= 10; i++) {
-      const att = interaction.options.getAttachment(`증거사진${i}`);
-      if (att) photoAttachments.push(att);
-    }
-    if (photoAttachments.length > 0) {
-      replyText += `\n📸 증거 사진 ${photoAttachments.length}장 첨부됨`;
-    }
-
-    const group = is소령 ? data.소령 : data.중령;
     if (!group.users[interaction.user.id]) {
       group.users[interaction.user.id] = {
         nick: displayName,
@@ -942,54 +841,75 @@ client.on('interactionCreate', async interaction => {
     const u = group.users[interaction.user.id];
     u.nick = displayName;
 
-    if (!u.daily[date]) u.daily[date] = { admin: 0, extra: 0 };
-    u.daily[date].admin += adminCount;
-    u.daily[date].extra += extra;
-    u.totalAdmin += adminCount;
-    u.totalExtra += extra;
+    // 하루 1회 제한
+    if (u.daily[date]) {
+      return interaction.reply({
+        content:
+          `❌ 오늘(${date}, 02:00 ~ 익일 02:00 기준)은 이미 **${rankName} 행정보고**를 완료했습니다.\n` +
+          `기록을 다시 제출해야 하면 관리자 역할이 **/오늘초기화 계급:${rankName} 대상:@유저** 명령어로 초기화한 뒤 다시 보고해 주세요.`,
+        ephemeral: true
+      });
+    }
 
-    dayTotalsCache.delete(`${is소령 ? '소령' : '중령'}|${date}`);
+    // 그룹랭크요청, 서버역할요청 치환 계산 안내
+    const groupRankConverted = Math.floor(input.그룹랭크요청 / 2);
+    const serverRoleConverted = Math.floor(input.서버역할요청 / 2);
+
+    let replyText =
+      `✅ **인사교육단 ${rankName} 보고 완료!**\n` +
+      `**닉네임**: ${mention}\n` +
+      `**일자**: ${date}\n` +
+      `**기준**: 02:00 ~ 익일 02:00 (하루 1회 제출)\n\n`;
+
+    replyText += `**랭크 변경**: ${input.랭크변경}건\n`;
+    replyText += `**인증**: ${input.인증}건\n`;
+    replyText += `**행정 요청**: ${input.행정요청}건\n`;
+    replyText += `**그룹 랭크 요청**: ${input.그룹랭크요청}건 → 랭크변경 ${groupRankConverted}건으로 치환\n`;
+    replyText += `**서버 역할 요청**: ${input.서버역할요청}건 → 랭크변경 ${serverRoleConverted}건으로 치환\n`;
+    replyText += `**보직가입 요청 / 모집시험**: ${input.보직모집}건\n`;
+    replyText += `**인게임 시험**: ${input.인게임시험}건\n`;
+    replyText += `**총 행정 건수**: ${adminCount}건\n`;
+
+    const photoAttachments = [];
+    for (let i = 1; i <= 10; i++) {
+      const att = interaction.options.getAttachment(`증거사진${i}`);
+      if (att) photoAttachments.push(att);
+    }
+
+    if (photoAttachments.length > 0) {
+      replyText += `\n📸 증거 사진 ${photoAttachments.length}장 첨부됨`;
+    } else {
+      replyText += `\n⚠️ 증거 사진이 첨부되지 않았습니다.`;
+    }
+
+    u.daily[date] = { admin: adminCount, extra: extra };
+    recomputeTotals(group);
+    dayTotalsCache.delete(`${rankName}|${date}`);
     saveData();
 
     // ================== 구글 시트 저장 ==================
+    // 컬럼: A날짜 B닉네임 C랭크변경 D인증 E행정요청 F그룹랭크요청 G서버역할요청 H총행정건수 I보직모집 J인게임시험
     try {
-      if (is소령) {
-        // A 날짜 / B 닉네임 / C 권한지급 / D 랭크변경 / E 팀변경 / F 총행정건수 / G 보직모집 / H 인게임시험
-        await appendRowToSheet('소령!A:H', [
-          date,
-          displayName,
-          input.권한지급,
-          input.랭크변경,
-          input.팀변경,
-          adminCount,
-          input.보직모집,
-          input.인게임시험
-        ]);
-      } else {
-        // A 날짜 / B 닉네임 / C 역할지급 / D 인증 / E 서버역할 / F 감찰 / G 총행정건수 / H 인게임시험 / I 코호스트 / J 피드백 / K 보직모집
-        await appendRowToSheet('중령!A:K', [
-          date,
-          displayName,
-          input.역할지급,
-          input.인증,
-          input.서버역할,
-          input.감찰,
-          adminCount,
-          input.인게임시험,
-          input.코호스트,
-          input.피드백,
-          input.보직모집
-        ]);
-      }
+      const range = rankName === '소령' ? '소령!A:J' : '중령!A:J';
+      await appendRowToSheet(range, [
+        date,
+        displayName,
+        input.랭크변경,
+        input.인증,
+        input.행정요청,
+        input.그룹랭크요청,
+        input.서버역할요청,
+        adminCount,
+        input.보직모집,
+        input.인게임시험
+      ]);
     } catch (e) {
       console.error('❌ 구글시트 저장 실패:', e);
       replyText += `\n\n⚠️ 구글 시트 자동 기입에 실패했습니다. Railway Logs를 확인하세요.`;
     }
 
-    // ================== 증거사진 처리 ==================
-    // embed에 URL을 또 넣지 않고, 첨부파일만 전송
+    // 증거사진 처리
     let files = [];
-
     if (photoAttachments.length > 0) {
       files = photoAttachments.slice(0, 10).map((att, idx) => ({
         attachment: att.url,
@@ -997,93 +917,89 @@ client.on('interactionCreate', async interaction => {
       }));
     }
 
-    await interaction.reply({
-      content: replyText,
-      files,
-      ephemeral: false
-    });
+    await interaction.reply({ content: replyText, files, ephemeral: false });
     return;
   }
 
-  // ================== 감독관 전용 ==================
-  const supervisorOnlyCmds = new Set([
-    '소령오늘점수', '소령주간점수', '소령어제점수', '소령지난주점수',
-    '중령오늘점수', '중령주간점수', '중령어제점수', '중령지난주점수',
-    '어제점수', '지난주점수',
-    '초기화주간', '소령오늘초기화', '중령오늘초기화',
-    '행정통계'
-  ]);
-
-  if (supervisorOnlyCmds.has(cmd) && !isSupervisor()) {
-    return interaction.reply({ content: '❌ 감독관만 사용할 수 있습니다.', ephemeral: true });
+  // ================== 그 외 명령어는 관리자 역할만 ==================
+  if (!isManager()) {
+    return interaction.reply({
+      content: '❌ 지정된 관리 역할만 이 봇 명령어를 사용할 수 있습니다.',
+      ephemeral: true
+    });
   }
 
   const guild = interaction.guild;
 
   async function replyDailyPaged(rankName, dateStr, mode) {
     if (!guild) return interaction.reply({ content: '❌ 서버 정보를 찾을 수 없습니다.', ephemeral: true });
-
     const memberIds = await getEligibleMemberIdsByRank(guild, rankName);
     const { display } = buildDayScoresForMembers(rankName, dateStr, memberIds);
-
     const pageSize = 28;
-    const page = 0;
     const totalPages = Math.max(1, Math.ceil(display.length / pageSize));
-
     const titlePrefix = mode === 'today' ? '오늘 점수' : mode === 'yesterday' ? '어제 점수' : '점수';
-    const embed = createDailyEmbedPaged(rankName, dateStr, display, page, pageSize, titlePrefix);
-    const components = buildPagerComponents(rankName, mode, dateStr, page, totalPages);
-
+    const embed = createDailyEmbedPaged(rankName, dateStr, display, 0, pageSize, titlePrefix);
+    const components = buildPagerComponents(rankName, mode, dateStr, 0, totalPages);
     const msg = await interaction.reply({ embeds: [embed], components, fetchReply: true });
     paginationSessions.set(msg.id, { rankName, mode, key: dateStr, list: display, pageSize });
   }
 
   async function replyWeeklyPaged(rankName, weekStart, mode) {
     if (!guild) return interaction.reply({ content: '❌ 서버 정보를 찾을 수 없습니다.', ephemeral: true });
-
     const memberIds = await getEligibleMemberIdsByRank(guild, rankName);
-
     const weekDates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
     const weekEnd = addDays(weekStart, 6);
-
     const group = rankName === '소령' ? data.소령 : data.중령;
 
     const totals = {};
     for (const uid of memberIds) {
-      totals[uid] = {
-        userId: uid,
-        nick: group.users?.[uid]?.nick || `<@${uid}>`,
-        weeklyTotal: 0
-      };
+      totals[uid] = { userId: uid, nick: group.users?.[uid]?.nick || `<@${uid}>`, weeklyTotal: 0 };
     }
-
     for (const d of weekDates) {
       const totalsMap = getDayTotalsOnly(rankName, d);
       for (const uid of memberIds) totals[uid].weeklyTotal += (totalsMap.get(uid) || 0);
     }
 
     const list = Object.values(totals).sort((a, b) => b.weeklyTotal - a.weeklyTotal);
-
     const pageSize = 28;
-    const page = 0;
     const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
-
-    const titlePrefix = mode === 'week' ? '주간 점수' : '지난주 점수';
-    const embed = createWeeklyEmbedPaged(rankName, weekStart, weekEnd, list, page, pageSize, titlePrefix);
-    const components = buildPagerComponents(rankName, mode, weekStart, page, totalPages);
-
+    const titlePrefix = mode === 'week' ? '이번주 점수' : '지난주 점수';
+    const embed = createWeeklyEmbedPaged(rankName, weekStart, weekEnd, list, 0, pageSize, titlePrefix);
+    const components = buildPagerComponents(rankName, mode, weekStart, 0, totalPages);
     const msg = await interaction.reply({ embeds: [embed], components, fetchReply: true });
     paginationSessions.set(msg.id, { rankName, mode, key: weekStart, list, pageSize });
   }
 
+  async function replyDemotionPaged(weekStart, mode) {
+    if (!guild) return interaction.reply({ content: '❌ 서버 정보를 찾을 수 없습니다.', ephemeral: true });
+    const list = await buildDemotionListForWeek(guild, weekStart);
+    const pageSize = 28;
+    const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
+    const weekEnd = addDays(weekStart, 6);
+    const isLastWeek = mode === 'demotion_lastweek';
+
+    const embed = createDemotionEmbed(
+      list, 0, pageSize, totalPages,
+      isLastWeek
+        ? `지난주 강등 대상 (${weekStart} ~ ${weekEnd}, 주간 총합 120점 미만)`
+        : `강등 대상 (${weekStart} ~ ${weekEnd}, 주간 총합 120점 미만)`,
+      isLastWeek ? '지난 주' : '현재 주'
+    );
+
+    const components = buildDemotionComponents(mode, weekStart, 0, totalPages);
+    const msg = await interaction.reply({ embeds: [embed], components, fetchReply: true });
+    paginationSessions.set(msg.id, { mode, key: weekStart, list, pageSize });
+  }
+
+  // ================== 점수 조회 ==================
   if (cmd === '소령오늘점수') return replyDailyPaged('소령', getReportDate(), 'today');
   if (cmd === '중령오늘점수') return replyDailyPaged('중령', getReportDate(), 'today');
 
-  if (cmd === '소령주간점수') {
+  if (cmd === '소령이번주점수') {
     const weekStart = data.소령.weekStart || getSundayWeekStart(getReportDate());
     return replyWeeklyPaged('소령', weekStart, 'week');
   }
-  if (cmd === '중령주간점수') {
+  if (cmd === '중령이번주점수') {
     const weekStart = data.중령.weekStart || getSundayWeekStart(getReportDate());
     return replyWeeklyPaged('중령', weekStart, 'week');
   }
@@ -1102,90 +1018,28 @@ client.on('interactionCreate', async interaction => {
     return replyWeeklyPaged('중령', lastWeekStart, 'lastweek');
   }
 
+  // ================== 강등 대상 ==================
   if (cmd === '강등대상') {
-    const allowed =
-      hasFullAccess(interaction.member) ||
-      hasAnyRole(interaction.member, DEMOTION_ALLOWED_ROLE_IDS);
-
-    if (!allowed) {
-      return interaction.reply({ content: '❌ 감독관 또는 인사행정부단장만 사용할 수 있습니다.', ephemeral: true });
-    }
-
-    if (!guild) return interaction.reply({ content: '❌ 서버 정보를 찾을 수 없습니다.', ephemeral: true });
-
-    const members = await guild.members.fetch();
-
-    const eligible = [];
-    for (const [, m] of members) {
-      if (m.user?.bot) continue;
-
-      const rankName = getRankNameForMember(m);
-      if (!rankName) continue;
-
-      if (daysSinceJoined(m) < 7) continue;
-      if (hasAnyRole(m, DEMOTION_EXCLUDED_ROLE_IDS)) continue;
-
-      eligible.push({ member: m, rankName });
-    }
-
-    const majorIds = eligible.filter(x => x.rankName === '소령').map(x => x.member.id);
-    const ltcolIds = eligible.filter(x => x.rankName === '중령').map(x => x.member.id);
-
-    const majorDates = getAllDateKeysForRank('소령');
-    const ltcolDates = getAllDateKeysForRank('중령');
-
-    const totals = new Map();
-    for (const uid of majorIds) totals.set(uid, { totalScore: 0, rankName: '소령' });
-    for (const uid of ltcolIds) totals.set(uid, { totalScore: 0, rankName: '중령' });
-
-    for (const d of majorDates) {
-      const dayTotals = getDayTotalsOnly('소령', d);
-      for (const uid of majorIds) totals.get(uid).totalScore += (dayTotals.get(uid) || 0);
-    }
-    for (const d of ltcolDates) {
-      const dayTotals = getDayTotalsOnly('중령', d);
-      for (const uid of ltcolIds) totals.get(uid).totalScore += (dayTotals.get(uid) || 0);
-    }
-
-    const list = [];
-    for (const { member, rankName } of eligible) {
-      const t = totals.get(member.id);
-      const totalScore = t?.totalScore ?? 0;
-
-      if (totalScore < 150) {
-        list.push({ userId: member.id, mention: `<@${member.id}>`, rankName, totalScore });
-      }
-    }
-
-    list.sort((a, b) => a.totalScore - b.totalScore);
-
-    const pageSize = 28;
-    const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
-    const page = 0;
-
-    const embed = createDemotionEmbed(list, page, pageSize, totalPages);
-    const components = buildDemotionComponents(page, totalPages);
-
-    const msg = await interaction.reply({ embeds: [embed], components, fetchReply: true });
-    paginationSessions.set(msg.id, { mode: 'demotion', list, pageSize });
-    return;
+    const currentWeekStart = getSundayWeekStart(getReportDate());
+    return replyDemotionPaged(currentWeekStart, 'demotion_current');
   }
 
+  if (cmd === '지난주강등대상') {
+    const thisWeekStart = getSundayWeekStart(getReportDate());
+    const lastWeekStart = addDays(thisWeekStart, -7);
+    return replyDemotionPaged(lastWeekStart, 'demotion_lastweek');
+  }
+
+  // ================== 어제점수 요약 ==================
   if (cmd === '어제점수') {
     const dateStr = getYesterdayDate();
     const embed = new EmbedBuilder()
       .setTitle(`어제 점수 (기준일: ${dateStr})`)
-      .setDescription('※ 공용 명령은 현재 “요약 안내”만 유지 중입니다.');
+      .setDescription('※ 소령/중령 어제점수는 각각 /소령어제점수, /중령어제점수 명령어를 사용해주세요.');
     return interaction.reply({ embeds: [embed] });
   }
 
-  if (cmd === '지난주점수') {
-    const embed = new EmbedBuilder()
-      .setTitle('지난주 점수')
-      .setDescription('※ 공용 명령은 현재 “요약 안내”만 유지 중입니다.');
-    return interaction.reply({ embeds: [embed] });
-  }
-
+  // ================== 초기화주간 ==================
   if (cmd === '초기화주간') {
     const majRes = clearPrev7ReportDaysBeforeThisWeek(data.소령);
     const ltRes = clearPrev7ReportDaysBeforeThisWeek(data.중령);
@@ -1193,15 +1047,13 @@ client.on('interactionCreate', async interaction => {
     data.소령.weekStart = majRes.thisWeekStart;
     data.중령.weekStart = ltRes.thisWeekStart;
 
-    pruneOldDaily(21);
-    pruneOldWeekly(12);
-
+    pruneOldDaily(28);
+    pruneOldWeekly(16);
     dayTotalsCache.clear();
     paginationSessions.clear();
     saveData();
 
     const endShown = addDays(majRes.rangeEnd, -1);
-
     return interaction.reply({
       content:
         `🔄 주간 초기화 완료 (일요일 02시 기준)\n` +
@@ -1214,10 +1066,11 @@ client.on('interactionCreate', async interaction => {
     });
   }
 
-  if (cmd === '소령오늘초기화' || cmd === '중령오늘초기화') {
-    const is소령 = cmd === '소령오늘초기화';
+  // ================== 오늘초기화 (통합) ==================
+  if (cmd === '오늘초기화') {
+    const rankName = interaction.options.getString('계급');
     const date = getReportDate();
-    const group = is소령 ? data.소령 : data.중령;
+    const group = rankName === '소령' ? data.소령 : data.중령;
 
     const targetUser = interaction.options.getUser('대상');
     const isAll = interaction.options.getBoolean('전체') === true;
@@ -1236,46 +1089,49 @@ client.on('interactionCreate', async interaction => {
           cleared++;
         }
       }
-
       recomputeTotals(group);
-      dayTotalsCache.delete(`${is소령 ? '소령' : '중령'}|${date}`);
+      dayTotalsCache.delete(`${rankName}|${date}`);
       paginationSessions.clear();
       saveData();
 
-      return interaction.reply({ content: `✅ 오늘(${date}) 기록 전체 초기화 완료 (${cleared}명)`, ephemeral: false });
+      return interaction.reply({
+        content:
+          `✅ ${rankName} 오늘(${date}) 기록 전체 초기화 완료 (${cleared}명)\n` +
+          `이제 해당 인원들은 /행정보고를 다시 사용할 수 있습니다.`,
+        ephemeral: false
+      });
     }
 
     const uid = targetUser.id;
     const u = group.users?.[uid];
     if (!u?.daily?.[date]) {
-      return interaction.reply({ content: `ℹ️ ${targetUser} 님은 오늘(${date}) 기록이 없습니다.`, ephemeral: true });
+      return interaction.reply({ content: `ℹ️ ${targetUser} 님은 오늘(${date}) ${rankName} 기록이 없습니다.`, ephemeral: true });
     }
 
     delete u.daily[date];
     recomputeTotals(group);
-
-    dayTotalsCache.delete(`${is소령 ? '소령' : '중령'}|${date}`);
+    dayTotalsCache.delete(`${rankName}|${date}`);
     paginationSessions.clear();
     saveData();
 
-    return interaction.reply({ content: `✅ ${targetUser} 님의 오늘(${date}) 기록을 초기화했습니다.`, ephemeral: false });
+    return interaction.reply({
+      content:
+        `✅ ${targetUser} 님의 오늘(${date}) ${rankName} 기록을 초기화했습니다.\n` +
+        `이제 ${targetUser} 님은 /행정보고를 다시 사용할 수 있습니다.`,
+      ephemeral: false
+    });
   }
 
+  // ================== 행정통계 ==================
   if (cmd === '행정통계') {
     const date = getReportDate();
 
     const sumGroup = (group) => {
-      let userCount = 0;
-      let totalAdmin = 0;
-      let totalExtra = 0;
-      let todayAdminUnits = 0;
-      let todayExtra = 0;
-
+      let userCount = 0, totalAdmin = 0, totalExtra = 0, todayAdminUnits = 0, todayExtra = 0;
       for (const u of Object.values(group.users || {})) {
         userCount++;
         totalAdmin += (u.totalAdmin || 0);
         totalExtra += (u.totalExtra || 0);
-
         const d = u.daily?.[date];
         if (d) {
           todayAdminUnits += (d.admin || 0);
@@ -1289,9 +1145,9 @@ client.on('interactionCreate', async interaction => {
     const sLt = sumGroup(data.중령);
 
     const embed = new EmbedBuilder()
-      .setTitle('행정 통계(원자료)')
+      .setTitle('인사교육단 행정 통계')
       .setDescription(
-        `**기준 일자(새벽 2시 기준)**: ${date}\n\n` +
+        `**기준 일자(02시~익일 02시 기준)**: ${date}\n\n` +
         `## 소령\n` +
         `- 등록 인원: ${sMaj.userCount}명\n` +
         `- 누적(원자료): 행정(건수) ${sMaj.totalAdmin} / 추가(점수) ${sMaj.totalExtra}\n` +
@@ -1300,7 +1156,8 @@ client.on('interactionCreate', async interaction => {
         `- 등록 인원: ${sLt.userCount}명\n` +
         `- 누적(원자료): 행정(건수) ${sLt.totalAdmin} / 추가(점수) ${sLt.totalExtra}\n` +
         `- 오늘(원자료): 행정(건수) ${sLt.todayAdminUnits} / 추가(점수) ${sLt.todayExtra}\n\n` +
-        `※ 최소업무 미달이어도 추가점수는 점수 합산에 반영됩니다.`
+        `※ 소령 최소업무 2건 / 중령 최소업무 3건 미달이어도 추가점수는 점수 합산에 반영됩니다.\n` +
+        `※ 행정보고는 02시~익일 02시 기준 하루 1회만 제출 가능합니다.`
       );
 
     return interaction.reply({ embeds: [embed] });
@@ -1318,75 +1175,63 @@ client.login(TOKEN);
 /*
 ================== 최종 반영 사항 ==================
 
-1) 전체 명령어 사용 가능 역할 추가
-- 1482691735762108486
-- 1485155863730589860
-- 1486356471695282317
+1) 역할 ID
+- 소령: 1486229581190004753
+- 중령: 1486229581190004754
+- 강등대상 포함 역할: 1486229581584142437
+- 강등대상 제외 역할: 1486229581190004752
+- 모든 관리 명령어 사용 가능 역할: 1489255441492869170
 
-2) 역할 ID 변경
-- 감독관: 1480915647922966658
-- 사령본부: 1480916945963585566
-- 인사행정부단장: 1480918241831424040
+2) 행정보고 통합
+- /소령행정보고 + /중령행정보고 → /행정보고 하나로 통합
+- 봇이 역할 자동 판별 (중령 우선)
 
-3) 최소업무 미달 처리 변경
-- 소령 3 미만 / 중령 4 미만이어도
-  행정점수는 0점
-  추가점수는 그대로 반영
+3) 행정 업무 입력 항목
+- 랭크변경 (x1)
+- 인증 (x1)
+- 행정요청 (x1)
+- 그룹랭크요청 (2건 = 랭크변경 1건으로 치환)
+- 서버역할요청 (2건 = 랭크변경 1건으로 치환)
+- 보직모집 (추가점수 인당 2점)
+- 인게임시험 (추가점수 1점)
 
-4) 반영 범위
-- 오늘점수
-- 어제점수
-- 주간점수
-- 지난주점수
-- 강등대상
-- 자동 스냅샷
-- 내부 일별/주간 합산
+4) 추가점수 계산
+- 보직모집 = 2점
+- 인게임시험 = 1점
+- 추가점수 최대 30점
 
-5) 소령 총 행정 건수 계산
-- 권한지급 = 0.5
-- 랭크변경 = 1
-- 팀변경 = 1
+5) 최소업무 미달 처리
+- 소령 2 미만이면 행정점수 0점
+- 중령 3 미만이면 행정점수 0점
+- 추가점수는 그대로 반영
 
-6) 중령 총 행정 건수 계산
-- 역할지급 = 1
-- 인증 = 1.5
-- 서버역할 = 0.5
-- 감찰 = 2
+6) 점수 배점
+- 상위 10%: 70점
+- 상위 34%: 50점
+- 상위 66%: 40점
+- 상위 90%: 30점
+- 하위 10%: 20점
 
-7) 중령 추가점수
-- 인게임시험 = 1
-- 코호스트 = 1
-- 피드백 = 2
-- 보직모집 = 2
-
-8) 구글 시트 저장 형식
-[소령]
+7) 구글 시트 저장 형식 (소령/중령 동일)
 A 날짜
 B 닉네임
-C 권한지급
-D 랭크변경
-E 팀변경
-F 총 행정 건수
-G 보직모집
-H 인게임시험
-
-[중령]
-A 날짜
-B 닉네임
-C 역할지급
+C 랭크변경
 D 인증
-E 서버역할
-F 감찰
-G 총 행정 건수
-H 인게임시험
-I 코호스트
-J 피드백
-K 보직모집
+E 행정요청
+F 그룹랭크요청
+G 서버역할요청
+H 총 행정 건수
+I 보직모집
+J 인게임시험
 
-9) 증거사진 중복 버그 수정
-- embed에 사진 URL을 다시 넣지 않음
-- 첨부파일만 한 번에 전송
-- 디스코드 기본 이미지 뷰어에서 한 묶음처럼 열어볼 수 있게 처리
+8) 점수 조회 명령어 (소령/중령 따로 유지)
+- /소령오늘점수, /소령어제점수, /소령이번주점수, /소령지난주점수
+- /중령오늘점수, /중령어제점수, /중령이번주점수, /중령지난주점수
 
-※ 시트 탭 이름은 반드시 '소령', '중령' 이어야 합니다.
+9) 오늘초기화 통합
+- /소령오늘초기화 + /중령오늘초기화 → /오늘초기화 (계급 선택)
+
+10) 명칭 변경
+- 인사행정단 → 인사교육단
+- 훈련개최 → 인게임시험
 */
