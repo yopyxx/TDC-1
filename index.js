@@ -1,4 +1,4 @@
-// @ts-nocheck
+﻿// @ts-nocheck
 
 const {
   Client,
@@ -651,8 +651,19 @@ async function buildDemotionListForWeek(guild, weekStart) {
 
 // ================== 명령어 등록 ==================
 async function registerCommands() {
-  const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
-  if (!guild) return console.log('서버를 찾을 수 없습니다.');
+  console.log(`🔎 명령어 등록 대상 길드 ID: ${GUILD_ID}`);
+
+  const guild = await client.guilds.fetch(GUILD_ID).catch((err) => {
+    console.error('❌ 길드 조회 실패:', err?.message || err);
+    return null;
+  });
+
+  if (!guild) {
+    console.log('❌ 서버를 찾을 수 없습니다. 봇이 해당 길드에 초대되어 있는지, TOKEN이 이 봇의 토큰인지 확인하세요.');
+    return;
+  }
+
+  console.log(`🔎 명령어 등록 대상 길드: ${guild.name} (${guild.id})`);
 
   const 소령Command = new SlashCommandBuilder()
     .setName('소령행정보고')
@@ -698,7 +709,8 @@ async function registerCommands() {
     .addUserOption(o => o.setName('대상').setDescription('초기화할 대상 유저(선택)').setRequired(false))
     .addBooleanOption(o => o.setName('전체').setDescription('전체 유저를 오늘 기록 초기화').setRequired(false));
 
-  await guild.commands.set([
+  try {
+    await guild.commands.set([
     소령Command.toJSON(),
     중령Command.toJSON(),
 
@@ -720,9 +732,13 @@ async function registerCommands() {
 
     new SlashCommandBuilder().setName('강등대상').setDescription('이번 주 주간 총합 120점 미만 강등 대상 조회').toJSON(),
     new SlashCommandBuilder().setName('지난주강등대상').setDescription('지난 주 주간 총합 120점 미만 강등 대상 조회').toJSON()
-  ]);
+    ]);
 
-  console.log('✅ 명령어 등록 완료');
+    console.log('✅ 명령어 등록 완료');
+  } catch (err) {
+    console.error('❌ 명령어 등록 실패:', err?.rawError || err?.message || err);
+    throw err;
+  }
 }
 
 // ================== ready ==================
@@ -1310,3 +1326,5 @@ if (!TOKEN) {
 }
 
 client.login(TOKEN);
+
+
