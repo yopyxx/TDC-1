@@ -11,11 +11,13 @@ const {
 } = require('discord.js');
 const cron = require('node-cron');
 const fs = require('fs');
+const http = require('http');
 const path = require('path');
 const { google } = require('googleapis');
 
 // ================== 설정 ==================
 const TOKEN = process.env.TOKEN;
+const PORT = Number(process.env.PORT || 3000);
 const GUILD_ID = '1018194815286001756';
 
 // 인교단 진급 스프레드시트 ID
@@ -100,6 +102,26 @@ const client = new Client({
     GatewayIntentBits.GuildMembers
   ]
 });
+
+function startHealthServer() {
+  const server = http.createServer((req, res) => {
+    const isHealthPath = req.url === '/' || req.url === '/health';
+    const status = isHealthPath ? 200 : 404;
+
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({
+      ok: isHealthPath,
+      bot: client.user?.tag || null,
+      uptime: Math.floor(process.uptime())
+    }));
+  });
+
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`✅ Health server listening on port ${PORT}`);
+  });
+
+  return server;
+}
 
 // ================== 역할 ID ==================
 const MANAGER_ROLE_IDS = [
@@ -1332,6 +1354,14 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-client.login(TOKEN);
+process.on('SIGTERM', () => {
+  console.log('ℹ️ SIGTERM received. Railway가 프로세스를 종료했습니다.');
+});
+
+startHealthServer();
+client.login(TOKEN).catch((err) => {
+  console.error('❌ Discord 로그인 실패:', err);
+  process.exit(1);
+});
 
 
