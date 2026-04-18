@@ -295,7 +295,7 @@ function calculateAdminUnits(input) {
 
 function calculateExtraPoints(input) {
   return (
-    (input.보직모집 || 0) * 2 +
+    (input.보직모집 || 0) * 1.5 +
     (input.인게임시험 || 0) * 1
   );
 }
